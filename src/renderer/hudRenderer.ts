@@ -1,222 +1,240 @@
 /**
- * Trapulator 2.0 - High-Fidelity Retro Espionage HUD.
+ * Raider status panel: portrait, health, loot, tools, traps and clock.
  */
 
-import { CounterItemType, SecretItemType, TrapType } from '../core/types';
-import { Spy } from '../core/spy/spy';
+import { LootType, ToolType, TrapType } from '../core/types';
+import { Raider } from '../core/raider/raider';
+import { RAIDER_PALETTES } from './raiderRenderer';
+
+const RAIDER_NAMES = { RUSTY: 'RUSTY', SOOT: 'SOOT' } as const;
+
+const LOOT_ICONS: { type: LootType; icon: string }[] = [
+  { type: LootType.BASKET, icon: '🧺' },
+  { type: LootType.PIZZA, icon: '🍕' },
+  { type: LootType.CHEESE, icon: '🧀' },
+  { type: LootType.HONEY, icon: '🍯' },
+  { type: LootType.FISH, icon: '🐟' }
+];
+
+/** In key order: tool N clears trap N. */
+const TOOL_ICONS: { type: ToolType; icon: string }[] = [
+  { type: ToolType.OVEN_MITT, icon: '🧤' },
+  { type: ToolType.COOKING_OIL, icon: '🫒' },
+  { type: ToolType.CLOTHES_PEG, icon: '📎' },
+  { type: ToolType.BROOM, icon: '🧹' },
+  { type: ToolType.RUBBER_BOOTS, icon: '🥾' }
+];
+
+const TRAP_ICONS: { type: TrapType; icon: string }[] = [
+  { type: TrapType.SNAP_TRAP, icon: '🪤' },
+  { type: TrapType.GLUE_PAD, icon: '🍬' },
+  { type: TrapType.PEPPER_POOF, icon: '🌶️' },
+  { type: TrapType.MARBLE_SPILL, icon: '🔮' },
+  { type: TrapType.STATIC_MAT, icon: '⚡' }
+];
+
+const SLOT = 28;
+const SLOT_GAP = 2;
+const LABEL_FONT = 'bold 10px "Trebuchet MS", sans-serif';
+const HINT_FONT = '10px "Trebuchet MS", sans-serif';
+const MUTED = '#a8a29e';
 
 export class HudRenderer {
   public static render(
     ctx: CanvasRenderingContext2D,
-    spy: Spy,
-    remainingSeconds: number,
+    raider: Raider,
     x: number,
     y: number,
     width: number,
     height: number,
     tick: number = 0
   ): void {
+    const palette = RAIDER_PALETTES[raider.id];
+
     ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
 
-    // 1. Brushed Metal / Espionage Console Frame
-    const bgGrad = ctx.createLinearGradient(x, y, x, y + height);
-    bgGrad.addColorStop(0, '#1e293b');
-    bgGrad.addColorStop(0.5, '#0f172a');
-    bgGrad.addColorStop(1, '#020617');
-    ctx.fillStyle = bgGrad;
+    ctx.fillStyle = '#1c1917';
     ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = palette.bandana;
+    ctx.fillRect(x, y, width, 2);
 
-    // Beveled borders
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, width, height);
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(x, y, width, 1); // top highlight
+    this.renderPortrait(ctx, raider, x + 10, y + 12, 56);
 
-    const isWhite = spy.color === 'WHITE';
+    // Name and health
+    ctx.fillStyle = '#fafaf9';
+    ctx.font = 'bold 16px "Trebuchet MS", sans-serif';
+    ctx.fillText(RAIDER_NAMES[raider.id], x + 76, y + 28);
 
-    // 2. Spy Avatar Portrait (Left)
-    this.renderAvatar(ctx, isWhite, spy.state, x + 6, y + 4, height - 8);
+    const barX = x + 76;
+    const barY = y + 36;
+    const barW = 100;
+    const health = raider.health / raider.maxHealth;
+    ctx.fillStyle = '#0c0a09';
+    ctx.fillRect(barX, barY, barW, 9);
+    ctx.fillStyle = health > 0.5 ? '#22c55e' : health > 0.25 ? '#eab308' : '#ef4444';
+    ctx.fillRect(barX + 1, barY + 1, (barW - 2) * health, 7);
 
-    // 3. Spy Name & Health Bar
-    const textStartX = x + 40;
-    ctx.fillStyle = isWhite ? '#f8fafc' : '#ef4444';
-    ctx.font = '900 11px "Courier New", monospace';
-    ctx.fillText(isWhite ? 'WHITE SPY' : 'BLACK SPY', textStartX, y + 14);
+    ctx.font = HINT_FONT;
+    ctx.fillStyle = MUTED;
+    ctx.fillText(this.statusText(raider), barX, y + 60);
 
-    // Health Bar Gauge (Segmented Bar)
-    const barX = textStartX;
-    const barY = y + 18;
-    const barW = 75;
-    const barH = 7;
-    const healthPercent = Math.max(0, spy.health / spy.maxHealth);
+    // Loot, tools and traps
+    const inv = raider.inventory;
+    this.renderGroup(ctx, 'LOOT', '', x + 192, y, LOOT_ICONS.length, (i, sx, sy) => {
+      const { type, icon } = LOOT_ICONS[i];
+      const has = type === LootType.BASKET ? inv.hasBasket : inv.collectedItems.has(type) || inv.heldItem === type;
+      this.renderSlot(ctx, sx, sy, icon, has ? '#22c55e' : undefined, has);
+    });
 
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(barX, barY, barW, barH);
-    ctx.strokeStyle = '#475569';
-    ctx.strokeRect(barX, barY, barW, barH);
+    this.renderGroup(ctx, 'TOOL IN PAW', 'keys 1-5, 0 none', x + 352, y, TOOL_ICONS.length, (i, sx, sy) => {
+      const { type, icon } = TOOL_ICONS[i];
+      const active = inv.activeTool === type;
+      this.renderSlot(ctx, sx, sy, icon, active ? '#38bdf8' : undefined, active);
+    });
 
-    // Colored health fill
-    const healthColor = healthPercent > 0.5 ? '#22c55e' : healthPercent > 0.25 ? '#eab308' : '#ef4444';
-    ctx.fillStyle = healthColor;
-    ctx.fillRect(barX + 1, barY + 1, (barW - 2) * healthPercent, barH - 2);
+    this.renderGroup(ctx, 'TRAPS', 'Shift + 1-5', x + 512, y, TRAP_ICONS.length, (i, sx, sy) => {
+      const { type, icon } = TRAP_ICONS[i];
+      const count = inv.trapsAvailable[type];
+      this.renderSlot(ctx, sx, sy, icon, undefined, count > 0);
+      ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = count > 0 ? '#fde68a' : '#57534e';
+      ctx.textAlign = 'right';
+      ctx.fillText(String(count), sx + SLOT - 2, sy + SLOT - 2);
+      ctx.textAlign = 'left';
+    });
 
-    // 4. Secret Escape Items Panel
-    const itemsStartX = textStartX + barW + 16;
-    ctx.font = 'bold 9px "Courier New", monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('ITEMS:', itemsStartX, y + 14);
-
-    const items = [
-      { type: SecretItemType.BRIEFCASE, label: '💼', name: 'CASE' },
-      { type: SecretItemType.PASSPORT, label: '🛂', name: 'PASS' },
-      { type: SecretItemType.SECRET_PLANS, label: '📜', name: 'PLAN' },
-      { type: SecretItemType.MONEY, label: '💰', name: 'CASH' },
-      { type: SecretItemType.KEY, label: '🔑', name: 'KEY' }
-    ];
-
-    let iconX = itemsStartX + 42;
-    for (const it of items) {
-      const has =
-        it.type === SecretItemType.BRIEFCASE
-          ? spy.inventory.hasBriefcase
-          : spy.inventory.collectedItems.has(it.type) || spy.inventory.heldSingleItem === it.type;
-
-      // Slot border
-      ctx.fillStyle = has ? 'rgba(34, 197, 94, 0.2)' : 'rgba(15, 23, 42, 0.6)';
-      ctx.fillRect(iconX - 2, y + 4, 20, 20);
-      ctx.strokeStyle = has ? '#22c55e' : '#334155';
-      ctx.strokeRect(iconX - 2, y + 4, 20, 20);
-
-      ctx.fillStyle = has ? '#ffffff' : '#475569';
-      ctx.font = '11px sans-serif';
-      ctx.fillText(it.label, iconX, y + 18);
-
-      iconX += 24;
-    }
-
-    // 5. Active Tool Display Badge
-    const toolX = iconX + 14;
-    ctx.font = 'bold 9px "Courier New", monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('TOOL:', toolX, y + 14);
-
-    const toolBadgeX = toolX + 34;
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(toolBadgeX, y + 4, 82, 20);
-    ctx.strokeStyle = spy.inventory.activeTool ? '#38bdf8' : '#334155';
-    ctx.strokeRect(toolBadgeX, y + 4, 82, 20);
-
-    const toolName = spy.inventory.activeTool
-      ? this.getToolShortName(spy.inventory.activeTool)
-      : 'NONE [1-5]';
-    ctx.fillStyle = spy.inventory.activeTool ? '#38bdf8' : '#64748b';
-    ctx.font = 'bold 9px "Courier New", monospace';
-    ctx.fillText(toolName, toolBadgeX + 6, y + 17);
-
-    // 6. Trap Supplies Chips
-    const trapX = toolBadgeX + 90;
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('TRAPS:', trapX, y + 14);
-
-    const bombCount = spy.inventory.trapsAvailable[TrapType.BOMB] ?? 0;
-    const springCount = spy.inventory.trapsAvailable[TrapType.SPRING] ?? 0;
-    ctx.fillStyle = bombCount > 0 ? '#ef4444' : '#475569';
-    ctx.fillText(`💣x${bombCount}`, trapX + 42, y + 14);
-    ctx.fillStyle = springCount > 0 ? '#f59e0b' : '#475569';
-    ctx.fillText(`🌀x${springCount}`, trapX + 78, y + 14);
-
-    // 7. Nixie / LED Digital Countdown Clock (Right)
-    const mins = Math.floor(remainingSeconds / 60);
-    const secs = remainingSeconds % 60;
-    const timeStr = `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-
-    const clockW = 86;
-    const clockX = width - clockW - 10;
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(clockX, y + 4, clockW, 20);
-    ctx.strokeStyle = remainingSeconds <= 30 ? '#ef4444' : '#1e3a8a';
-    ctx.strokeRect(clockX, y + 4, clockW, 20);
-
-    // Blinking colon effect
-    const isBlinking = remainingSeconds <= 30 && tick % 20 < 10;
-    ctx.fillStyle = isBlinking ? '#f87171' : remainingSeconds <= 30 ? '#ef4444' : '#22c55e';
-    ctx.font = 'bold 13px "Courier New", monospace';
-    ctx.fillText(`⏱ ${timeStr}`, clockX + 6, y + 18);
+    this.renderClock(ctx, raider.clockSeconds, x + width - 118, y + 22, tick);
 
     ctx.restore();
   }
 
-  private static renderAvatar(
+  private static statusText(raider: Raider): string {
+    switch (raider.state) {
+      case 'KNOCKED_OUT':
+        return 'Seeing stars...';
+      case 'OUT_OF_TIME':
+        return 'Fast asleep';
+      case 'SEARCHING':
+        return 'Rummaging...';
+      default:
+        return raider.inventory.hasFullFeast() ? 'Feast packed: get to the gate!' : '';
+    }
+  }
+
+  private static renderGroup(
     ctx: CanvasRenderingContext2D,
-    isWhite: boolean,
-    state: string,
+    label: string,
+    hint: string,
     x: number,
     y: number,
-    size: number
+    count: number,
+    drawSlot: (index: number, slotX: number, slotY: number) => void
   ): void {
-    ctx.save();
+    ctx.font = LABEL_FONT;
+    ctx.fillStyle = MUTED;
+    ctx.fillText(label, x, y + 16);
 
-    // Portrait Box
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(x, y, size, size);
-    ctx.strokeStyle = isWhite ? '#f8fafc' : '#ef4444';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(x, y, size, size);
-
-    const cx = x + size / 2;
-    const cy = y + size / 2;
-    const mainColor = isWhite ? '#ffffff' : '#0f172a';
-    const accent = isWhite ? '#020617' : '#ffffff';
-
-    if (state === 'DEAD_ANGEL') {
-      // Angel Halo on Portrait
-      ctx.strokeStyle = '#facc15';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy - 7, 7, 2.5, 0, 0, Math.PI * 2);
-      ctx.stroke();
+    for (let i = 0; i < count; i++) {
+      drawSlot(i, x + i * (SLOT + SLOT_GAP), y + 22);
     }
 
-    // Fedora
-    ctx.fillStyle = mainColor;
-    ctx.fillRect(cx - 8, cy - 4, 16, 3);
-    ctx.fillRect(cx - 5, cy - 8, 10, 4);
-    ctx.fillStyle = accent;
-    ctx.fillRect(cx - 5, cy - 5, 10, 1.5);
-
-    // Beak
-    ctx.fillStyle = mainColor;
-    ctx.beginPath();
-    ctx.moveTo(cx - 2, cy - 1);
-    ctx.lineTo(cx + 8, cy + 2);
-    ctx.lineTo(cx - 2, cy + 4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = accent;
-    ctx.stroke();
-
-    // Eye
-    ctx.fillStyle = accent;
-    ctx.fillRect(cx + 1, cy - 2, 2, 2);
-
-    ctx.restore();
+    if (hint) {
+      ctx.font = HINT_FONT;
+      ctx.fillStyle = '#78716c';
+      ctx.fillText(hint, x, y + 66);
+    }
   }
 
-  private static getToolShortName(tool: CounterItemType): string {
-    switch (tool) {
-      case CounterItemType.WATER_BUCKET:
-        return '🪣 BUCKET';
-      case CounterItemType.COAT_HANGER:
-        return '🪝 HANGER';
-      case CounterItemType.WIRE_CUTTERS:
-        return '✂️ PLIERS';
-      case CounterItemType.UMBRELLA:
-        return '☂️ UMBRELLA';
-      case CounterItemType.RUBBER_GLOVES:
-        return '🧤 GLOVES';
-      default:
-        return 'NONE';
+  private static renderSlot(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    icon: string,
+    borderColor: string | undefined,
+    lit: boolean
+  ): void {
+    ctx.fillStyle = borderColor ? 'rgba(255, 255, 255, 0.12)' : '#292524';
+    ctx.fillRect(x, y, SLOT, SLOT);
+    ctx.strokeStyle = borderColor ?? '#44403c';
+    ctx.lineWidth = borderColor ? 2 : 1;
+    ctx.strokeRect(x, y, SLOT, SLOT);
+
+    ctx.globalAlpha = lit ? 1 : 0.32;
+    ctx.font = '15px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(icon, x + SLOT / 2, y + 20);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  private static renderClock(ctx: CanvasRenderingContext2D, seconds: number, x: number, y: number, tick: number): void {
+    const remaining = Math.max(0, seconds);
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    const low = remaining <= 30;
+
+    ctx.fillStyle = '#0c0a09';
+    ctx.fillRect(x, y, 108, 36);
+    ctx.strokeStyle = low ? '#ef4444' : '#44403c';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, 108, 36);
+
+    ctx.fillStyle = low ? (tick % 30 < 15 ? '#fca5a5' : '#ef4444') : '#fde68a';
+    ctx.font = 'bold 24px Consolas, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${mins}:${String(secs).padStart(2, '0')}`, x + 54, y + 26);
+    ctx.textAlign = 'left';
+  }
+
+  private static renderPortrait(ctx: CanvasRenderingContext2D, raider: Raider, x: number, y: number, size: number): void {
+    const palette = RAIDER_PALETTES[raider.id];
+    const cx = x + size / 2;
+    const cy = y + size / 2 + 3;
+
+    ctx.fillStyle = '#292524';
+    ctx.fillRect(x, y, size, size);
+
+    // Ears, head, mask and muzzle
+    ctx.fillStyle = palette.fur;
+    ctx.beginPath();
+    ctx.arc(cx - 15, cy - 15, 7, 0, Math.PI * 2);
+    ctx.arc(cx + 15, cy - 15, 7, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = palette.furDark;
+    ctx.beginPath();
+    ctx.ellipse(cx - 9, cy - 3, 9, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + 9, cy - 3, 9, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = palette.belly;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 9, 9, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#111827';
+    ctx.beginPath();
+    ctx.arc(cx, cy + 6, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (raider.isAwake()) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx - 9, cy - 3, 3, 0, Math.PI * 2);
+      ctx.arc(cx + 9, cy - 3, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 13, cy - 3);
+      ctx.lineTo(cx - 5, cy - 3);
+      ctx.moveTo(cx + 5, cy - 3);
+      ctx.lineTo(cx + 13, cy - 3);
+      ctx.stroke();
     }
   }
 }

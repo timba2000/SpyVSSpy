@@ -1,62 +1,48 @@
 /**
- * Booby Trap Management & Resolution System.
+ * Trap Management & Resolution System.
  */
 
-import { CounterItemType, SpyColor, TrapType, TRAP_COUNTER_MAP } from '../types';
-import { DoorData, FurnitureData } from '../room/room';
-import { Inventory } from '../spy/inventory';
+import { DOOR_TRAPS, FURNITURE_TRAPS, RaiderId, ToolType, TrapType, TRAP_COUNTER_MAP } from '../types';
+import { ArmedTrap, DoorData, FurnitureData } from '../room/room';
+import { Inventory } from '../raider/inventory';
 
 export type TrapInteractResult =
-  | { status: 'SAFE'; itemFound?: boolean }
-  | { status: 'DEFUSED'; trapType: TrapType; toolUsed: CounterItemType }
-  | { status: 'TRIGGERED'; trapType: TrapType; plantedBy: SpyColor };
+  | { status: 'SAFE' }
+  | { status: 'CLEARED'; trapType: TrapType; toolUsed: ToolType }
+  | { status: 'SPRUNG'; trapType: TrapType; plantedBy: RaiderId };
 
 export class TrapSystem {
   /**
-   * Arm a furniture piece with a trap.
+   * Hide a trap in a piece of furniture.
    */
   public static armFurniture(
     furniture: FurnitureData,
     trapType: TrapType,
-    planterColor: SpyColor,
+    planter: RaiderId,
     inventory: Inventory
   ): boolean {
-    // Only bomb, spring, and dynamite are furniture traps
-    const allowed = [TrapType.BOMB, TrapType.SPRING, TrapType.DYNAMITE];
-    if (!allowed.includes(trapType)) return false;
+    if (!FURNITURE_TRAPS.includes(trapType)) return false;
 
     // Cannot trap if already trapped
     if (furniture.armedTrap) return false;
 
     if (inventory.useTrap(trapType)) {
-      furniture.armedTrap = {
-        type: trapType,
-        plantedBy: planterColor
-      };
+      furniture.armedTrap = { type: trapType, plantedBy: planter };
       return true;
     }
     return false;
   }
 
   /**
-   * Arm a door with a trap (Acid bucket or Electrocution).
+   * Lay a trap at a door.
    */
-  public static armDoor(
-    door: DoorData,
-    trapType: TrapType,
-    planterColor: SpyColor,
-    inventory: Inventory
-  ): boolean {
-    const allowed = [TrapType.ACID_BUCKET, TrapType.ELECTROCUTION];
-    if (!allowed.includes(trapType)) return false;
+  public static armDoor(door: DoorData, trapType: TrapType, planter: RaiderId, inventory: Inventory): boolean {
+    if (!DOOR_TRAPS.includes(trapType)) return false;
 
     if (door.armedTrap) return false;
 
     if (inventory.useTrap(trapType)) {
-      door.armedTrap = {
-        type: trapType as TrapType.ACID_BUCKET | TrapType.ELECTROCUTION,
-        plantedBy: planterColor
-      };
+      door.armedTrap = { type: trapType, plantedBy: planter };
       return true;
     }
     return false;
@@ -66,59 +52,29 @@ export class TrapSystem {
    * Inspect and resolve interaction with furniture.
    */
   public static interactWithFurniture(furniture: FurnitureData, inventory: Inventory): TrapInteractResult {
-    if (!furniture.armedTrap) {
-      return { status: 'SAFE' };
-    }
-
-    const trapType = furniture.armedTrap.type;
-    const requiredTool = TRAP_COUNTER_MAP[trapType];
-
-    // Check if spy is holding the correct defusal tool
-    if (inventory.activeTool === requiredTool) {
-      furniture.armedTrap = undefined;
-      return {
-        status: 'DEFUSED',
-        trapType,
-        toolUsed: requiredTool
-      };
-    }
-
-    // Trap springs!
-    const planter = furniture.armedTrap.plantedBy;
-    furniture.armedTrap = undefined; // trap consumed upon detonation
-    return {
-      status: 'TRIGGERED',
-      trapType,
-      plantedBy: planter
-    };
+    const result = this.resolve(furniture.armedTrap, inventory);
+    if (result.status !== 'SAFE') furniture.armedTrap = undefined;
+    return result;
   }
 
   /**
    * Inspect and resolve passing through a door.
    */
   public static traverseDoor(door: DoorData, inventory: Inventory): TrapInteractResult {
-    if (!door.armedTrap) {
+    const result = this.resolve(door.armedTrap, inventory);
+    if (result.status !== 'SAFE') door.armedTrap = undefined;
+    return result;
+  }
+
+  private static resolve(trap: ArmedTrap | undefined, inventory: Inventory): TrapInteractResult {
+    if (!trap) {
       return { status: 'SAFE' };
     }
 
-    const trapType = door.armedTrap.type;
-    const requiredTool = TRAP_COUNTER_MAP[trapType];
-
+    const requiredTool = TRAP_COUNTER_MAP[trap.type];
     if (inventory.activeTool === requiredTool) {
-      door.armedTrap = undefined;
-      return {
-        status: 'DEFUSED',
-        trapType,
-        toolUsed: requiredTool
-      };
+      return { status: 'CLEARED', trapType: trap.type, toolUsed: requiredTool };
     }
-
-    const planter = door.armedTrap.plantedBy;
-    door.armedTrap = undefined;
-    return {
-      status: 'TRIGGERED',
-      trapType,
-      plantedBy: planter
-    };
+    return { status: 'SPRUNG', trapType: trap.type, plantedBy: trap.plantedBy };
   }
 }

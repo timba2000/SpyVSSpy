@@ -1,105 +1,84 @@
-# 🕵️‍♂️ Spy vs. Spy (Recreation)
+# Midnight Snackdown
 
-A modern, high-fidelity recreation of the classic 1984 split-screen action strategy game **Spy vs. Spy**, originally created by Mike Riedel for First Star Software and inspired by Antonio Prohías' legendary comic strip in *MAD Magazine*.
+Two rival raccoons, **Rusty** and **Soot**, break into a sleeping house to steal dinner. Each races to find a picnic basket and pack it with a four-dish feast, then get out through the garden gate. Along the way they booby-trap the furniture and doorways, and swat each other whenever they meet.
 
----
+The screen is split down the middle, one pane per raccoon, and you can always see both. Watching what your rival is up to is half the game.
 
-## 🎮 Game Concept & Rules
+## How to play
 
-In **Spy vs. Spy**, two rival secret agents—**White Spy** and **Black Spy**—infiltrate a foreign embassy. Their mission is to locate secret items, sabotage each other with devious booby traps, engage in desperate close-quarters combat, and escape to the waiting airport runway before time runs out.
+You play Rusty (left pane). Soot is computer-controlled.
 
-### 💼 Items to Escape
-To successfully escape the embassy, a spy must find:
-1. 🧳 **Briefcase** *(Essential: allows carrying multiple items)*
-2. 🛂 **Passport**
-3. 📜 **Secret Plans**
-4. 💰 **Money**
-5. 🔑 **Key**
+| Action | Keys |
+| :--- | :--- |
+| Move | WASD or arrow keys |
+| Rummage through furniture, grab floor loot | Space or E |
+| Swat | F or Q |
+| Choose the tool in your paw | 1 to 5 (0 for none) |
+| Set a trap | Shift + 1 to 5 |
 
-### 💣 The Trap System & Counter-Measures (C64 Authentic)
-Spies can set traps on furniture (safes, desks, paintings) and closed doors using their in-game **Trapulator**. Opening or searching a trapped object without the proper counter-item triggers an instant, hilarious knockout and drains 27 game seconds.
+### The feast
 
-| Trap | Placed On | Fires When | Remedy | Remedy Fixture |
-| :--- | :--- | :--- | :--- | :--- |
-| **Bomb** | Any Furniture | Searched | 🪣 **Water Bucket** | Red Fire Box (Left Wall) |
-| **Spring** | Any Furniture | Searched | ✂️ **Wire Cutters** | White Tool Box (Right Wall) |
-| **Electrified Bucket** | Closed Doors | Door Opened | ☂️ **Umbrella** | Coat Rack (Floor / Corner) |
-| **Gun with String** | Closed Doors | Door Opened | ✂️ **Scissors** | First Aid Kit (Back Wall) |
-| **Time Bomb** | Room Floor | 15s after arming | *None* (Flee Room!) | N/A |
+Find the **picnic basket** 🧺 and four dishes: **pizza** 🍕, **cheese** 🧀, **honey** 🍯 and **fish** 🐟. Without the basket you can only carry one thing in your mouth, and picking up another drops the first.
 
-### 🥊 Combat, Knockouts & The Airport Guard
-- **Combat Mode**: When both spies enter the same room, viewports align into melee combat. Any traps or remedies held in hand are destroyed; mission items and the briefcase scatter into room furniture!
-- **Knockout**: Loser drops $-20$ points and clock continues ticking while unconscious; winner receives $+80$ points.
-- **Airport Guard**: Guards the exit door; intercepts any spy lacking the full briefcase, boots them back into the room, and deducts $-80$ points.
-- **Master Spec**: See [`docs/game-design-document.md`](docs/game-design-document.md) for complete technical formulas, AI IQ tiers, scoring ladders, and multi-storey rules.
+The garden gate is at the far side of the Back Porch and opens only for a full basket. Loot is hidden in a different place every match.
 
----
+### Traps and tools
 
-## 🏗️ Architecture & Technology Stack
+Each raccoon starts with two of each trap, and only the planter can see where theirs are. Hold the matching tool to clear a trap safely. A trap catches anyone who sets it off, including the raccoon who planted it.
 
-- **Platform**: Modern Web / TypeScript / Vite
-- **Engine**: Headless Core Simulation (`src/core/`) — completely decoupled from graphics for deterministic updates and 100% headless testability.
-- **Renderer**: HTML5 Canvas 2D / WebGL split-screen viewport manager with procedural pixel-art retro shaders.
-- **Audio**: Web Audio API retro 8-bit sound synthesizers.
-- **Testing**: Vitest for fast, automated headless test verification.
+| Key | Trap | Set on | Cleared with |
+| :--- | :--- | :--- | :--- |
+| 1 | Snap Trap 🪤 | Furniture | Oven Mitt 🧤 |
+| 2 | Glue Pad 🍬 | Furniture | Cooking Oil 🫒 |
+| 3 | Pepper Poof 🌶️ | Furniture | Clothes Peg 📎 |
+| 4 | Marble Spill 🔮 | Doors | Broom 🧹 |
+| 5 | Static Mat ⚡ | Doors | Rubber Boots 🥾 |
 
-```text
-SpyvsSpy/
-├── .agents/                    # Antigravity agent configuration
-│   ├── rules/                  # Architecture, code quality, and testing rules
-│   │   ├── game-design.md
-│   │   ├── game-architecture.md
-│   │   ├── code-quality.md
-│   │   └── testing-verification.md
-│   └── skills/                 # Custom agent skills
-│       └── game-tester/
-│           └── SKILL.md
-├── docs/                       # Detailed design documentation & diagrams
-│   └── game-design-document.md
-├── src/
-│   ├── core/                   # Headless game simulation & state machine
-│   ├── renderer/               # Split-screen renderer & canvas drawing
-│   ├── input/                  # Keyboard, gamepad, and AI bot controls
-│   ├── audio/                  # Retro sound synthesizer & sound effects
-│   └── main.ts                 # Main bootstrap entry point
-├── tests/                      # Automated headless unit tests
-├── AGENTS.md                   # Core workspace guidelines for Antigravity
-├── README.md                   # Project overview & roadmap
-├── package.json                # Project dependencies & scripts
-├── tsconfig.json               # TypeScript strict configuration
-└── vite.config.ts              # Vite development & build configuration
-```
+### Knockouts and clocks
 
----
+Four swats, or one sprung trap, knock a raccoon out for 5 seconds. They drop everything they carry on the spot, lose 15 seconds off their own clock, and wake up back in their starting room.
 
-## 🚀 Getting Started
+Each raccoon has their own 3-minute clock. At zero they fall asleep for the rest of the match, leaving their loot behind and their traps armed, and the other plays on alone. If both fall asleep, the sun comes up and nobody gets dinner.
 
-### Prerequisites
-- Node.js (v18 or newer)
-- npm or pnpm
+## Getting started
 
-### Installation
+Requires Node.js 18 or newer.
+
 ```bash
 npm install
 ```
 
-### Running Locally
 ```bash
 npm run dev
 ```
 
-### Running Automated Tests
 ```bash
 npm test
 ```
 
----
+```bash
+npm run typecheck
+```
 
-## 🗺️ Roadmap
+## Architecture
 
-- [x] **Phase 0**: Project setup and Antigravity standards integration.
-- [x] **Phase 1**: Core Engine & Data Structures (Room graph, Spies, Inventory, Traps, Win condition).
-- [x] **Phase 2**: Headless Unit Test Suite (22 automated tests covering all game mechanics).
-- [x] **Phase 3**: Canvas 2D Split-Screen Renderer & Retro Sprite Graphics (Simulvision top/bottom viewports).
-- [x] **Phase 4**: Real-time Input (P1 keyboard controls + autonomous Black Spy AI bot).
-- [x] **Phase 5**: Web Audio 8-bit sound effects & Trapulator HUD.
+TypeScript, Vite and Canvas 2D, with no runtime dependencies. All art and sound are generated in code.
+
+```text
+src/
+├── core/        Headless game simulation (no DOM or canvas)
+│   ├── engine.ts       60 tick-per-second match loop and rules
+│   ├── room/           Rooms, doors, furniture, house layout
+│   ├── raider/         Raider state machine and inventory
+│   ├── trap/           Setting, springing and clearing traps
+│   ├── combat/         Paw-swat resolution
+│   └── events/         Typed event bus for audio and effects
+├── renderer/    Procedural drawing, split screen, status panels
+├── input/       Keyboard controller and the rival AI
+├── audio/       Synthesised sound effects (Web Audio)
+└── main.ts      Wires everything together
+tests/           Headless Vitest suite
+docs/            Game design document
+```
+
+See [`docs/game-design-document.md`](docs/game-design-document.md) for the rules and tuning values, and [`AGENTS.md`](AGENTS.md) for contributor conventions.

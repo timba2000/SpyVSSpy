@@ -2,42 +2,31 @@
  * Strongly-typed event definitions and event emitter for core game events.
  */
 
-import { SpyColor, TrapType, SecretItemType, CounterItemType, Direction } from '../types';
+import { RaiderId, TrapType, LootType, ToolType, Direction } from '../types';
 
-export type GameEventType =
-  | 'SPY_MOVED'
-  | 'SPY_ENTERED_ROOM'
-  | 'SPY_STARTED_SEARCH'
-  | 'SPY_FINISHED_SEARCH'
-  | 'ITEM_FOUND'
-  | 'ITEM_DROPPED'
-  | 'TRAP_ARMED'
-  | 'TRAP_TRIGGERED'
-  | 'TRAP_DEFUSED'
-  | 'COMBAT_HIT'
-  | 'SPY_KILLED'
-  | 'SPY_RESPAWNED'
-  | 'MATCH_WON'
-  | 'TIME_UP'
-  | 'CLOCK_TICK';
+export type KnockoutCause = 'TRAP' | 'COMBAT';
 
 export interface GameEventPayloads {
-  SPY_MOVED: { spy: SpyColor; x: number; y: number; direction: Direction };
-  SPY_ENTERED_ROOM: { spy: SpyColor; fromRoomId: string; toRoomId: string; doorDirection: Direction };
-  SPY_STARTED_SEARCH: { spy: SpyColor; furnitureId: string };
-  SPY_FINISHED_SEARCH: { spy: SpyColor; furnitureId: string; itemFound?: SecretItemType };
-  ITEM_FOUND: { spy: SpyColor; item: SecretItemType; storedInBriefcase: boolean };
-  ITEM_DROPPED: { spy: SpyColor; item: SecretItemType; roomId: string };
-  TRAP_ARMED: { spy: SpyColor; trapType: TrapType; targetId: string; targetType: 'FURNITURE' | 'DOOR' };
-  TRAP_TRIGGERED: { victim: SpyColor; trapType: TrapType; targetId: string; planter: SpyColor };
-  TRAP_DEFUSED: { defuser: SpyColor; trapType: TrapType; targetId: string; toolUsed: CounterItemType };
-  COMBAT_HIT: { attacker: SpyColor; target: SpyColor; damage: number; remainingHealth: number };
-  SPY_KILLED: { victim: SpyColor; cause: 'TRAP' | 'COMBAT'; killer?: SpyColor; penaltySeconds: number };
-  SPY_RESPAWNED: { spy: SpyColor; roomId: string; x: number; y: number };
-  MATCH_WON: { winner: SpyColor; reason: 'AIRPORT_ESCAPE' | 'TIME_ADVANTAGE' };
-  TIME_UP: { winner?: SpyColor; isTie: boolean };
-  CLOCK_TICK: { remainingSeconds: number };
+  RAIDER_MOVED: { raider: RaiderId; x: number; y: number; direction: Direction };
+  RAIDER_ENTERED_ROOM: { raider: RaiderId; fromRoomId: string; toRoomId: string; doorDirection: Direction };
+  RAIDER_STARTED_SEARCH: { raider: RaiderId; furnitureId: string };
+  RAIDER_FINISHED_SEARCH: { raider: RaiderId; furnitureId: string; lootFound?: LootType };
+  LOOT_FOUND: { raider: RaiderId; item: LootType; storedInBasket: boolean };
+  LOOT_DROPPED: { raider: RaiderId; item: LootType; roomId: string };
+  TRAP_SET: { raider: RaiderId; trapType: TrapType; targetId: string; targetType: 'FURNITURE' | 'DOOR' };
+  TRAP_SPRUNG: { victim: RaiderId; trapType: TrapType; targetId: string; planter: RaiderId };
+  TRAP_CLEARED: { clearedBy: RaiderId; trapType: TrapType; targetId: string; toolUsed: ToolType };
+  COMBAT_HIT: { attacker: RaiderId; target: RaiderId; damage: number; remainingHealth: number };
+  RAIDER_KNOCKED_OUT: { victim: RaiderId; cause: KnockoutCause; by?: RaiderId; penaltySeconds: number };
+  RAIDER_WOKE_UP: { raider: RaiderId; roomId: string; x: number; y: number };
+  RAIDER_OUT_OF_TIME: { raider: RaiderId };
+  GATE_REFUSED: { raider: RaiderId };
+  MATCH_WON: { winner: RaiderId };
+  TIME_UP: Record<string, never>;
+  CLOCK_TICK: { raider: RaiderId; clockSeconds: number };
 }
+
+export type GameEventType = keyof GameEventPayloads;
 
 export type GameEventListener<T extends GameEventType> = (payload: GameEventPayloads[T]) => void;
 

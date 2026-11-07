@@ -1,19 +1,18 @@
-# Code Quality & Standards — Spy vs. Spy
+# Code Quality & Standards: Midnight Snackdown
 
 ## Standards & Conventions
 
 1. **TypeScript Idioms**:
-   - Enable strict compiler options (`strict: true`, `noImplicitAny: true`, `exactOptionalPropertyTypes: true`).
-   - Use `enum` or union string literals for fixed states (`SpyColor = 'WHITE' | 'BLACK'`, `TrapType`, `FurnitureType`).
+   - Keep the strict compiler options in `tsconfig.json` on.
+   - Use `enum` or union string literals for fixed states (`RaiderId`, `TrapType`, `FurnitureType`).
    - Prefer explicit interface definitions for all state payloads and entity data.
 
 2. **Error Handling & Invariants**:
-   - Fail fast on invalid game state (e.g., trying to place a trap on non-existent furniture, attempting to open a door without a link).
-   - Use typed Result patterns or descriptive errors instead of silent failures.
+   - Fail fast on invalid game state, such as a lookup of a room that does not exist.
+   - Normal gameplay refusals, such as a trap with no valid target, return a value rather than throwing.
 
-3. **Asset Handling**:
-   - Keep asset loading centralized in `src/renderer/assets.ts` and `src/audio/soundBank.ts`.
-   - Support procedural fallback graphics (vector-drawn retro shapes/sprites) so the game is always playable even before custom bitmap sprites are provided.
+3. **Assets**:
+   - All art and sound are generated in code, so the game has no asset files to load.
 
 4. **Preservation**:
-   - Never remove existing tests, comments, or docstrings unless explicitly asked.
+   - Do not remove tests, comments, or docstrings unless the change calls for it.

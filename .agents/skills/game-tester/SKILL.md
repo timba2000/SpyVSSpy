@@ -1,11 +1,11 @@
 ---
 name: game-tester
-description: Automated test runner and game engine verification suite for Spy vs. Spy mechanics (inventory, traps, rooms, combat).
+description: Automated test runner and game engine verification suite for Midnight Snackdown mechanics (inventory, traps, rooms, combat, AI).
 ---
 
 # Game Tester Skill
 
-Use this skill to systematically verify the Spy vs. Spy game engine, mechanics, and rule enforcement.
+Use this skill to systematically verify the Midnight Snackdown game engine, mechanics, and rule enforcement.
 
 ## Verification Checklist
 
@@ -18,8 +18,9 @@ Use this skill to systematically verify the Spy vs. Spy game engine, mechanics, 
    npm test
    ```
 3. **Core Scenarios to Validate**:
-   - `inventory.test.ts`: Verify briefcase requirement to hold multiple items.
-   - `traps.test.ts`: Test all 5 trap types against defusal tools and naked triggers.
-   - `room.test.ts`: Verify door graph transitions and boundary constraints.
-   - `combat.test.ts`: Verify melee collision, damage, and angel death respawn.
-   - `winCondition.test.ts`: Verify airport exit door check with all 4 items in briefcase.
+   - `inventory.test.ts`: Basket rules and carrying limits.
+   - `traps.test.ts`: All 5 trap types against the right tool, the wrong tool, and no tool.
+   - `room.test.ts`: House layout, door links, loot placement and bounds.
+   - `combat.test.ts`: Swat range, facing, damage and knockouts.
+   - `engine.test.ts`: Door travel, double-sided door traps, the gate, clocks and end states.
+   - `ai.test.ts`: Whole simulated matches, plus the stuck-AI regressions.

@@ -1,13 +1,18 @@
 /**
- * Simulvision Split-Screen Viewport Manager.
- * Orchestrates dual perspective scaling, retro surveillance overlays, and visual effects.
+ * Split-Screen Renderer: a pane per raider, side by side, each showing that raider's
+ * room over their status panel. Rooms are drawn at a uniform scale.
  */
 
 import { GameEngine } from '../core/engine';
+import { RaiderId } from '../core/types';
 import { RoomRenderer } from './roomRenderer';
-import { SpyRenderer } from './spyRenderer';
+import { RaiderRenderer, RAIDER_PALETTES } from './raiderRenderer';
 import { HudRenderer } from './hudRenderer';
 import { VisualEffects } from './visualEffects';
+
+const LOGICAL_W = 320;
+const LOGICAL_H = 200;
+const DIVIDER_W = 4;
 
 export class SplitScreenRenderer {
   public static render(
@@ -18,174 +23,76 @@ export class SplitScreenRenderer {
     height: number,
     tick: number = 0
   ): void {
-    const halfHeight = height / 2;
-    const hudHeight = 28;
-    const roomViewHeight = halfHeight - hudHeight - 2;
-
-    const logicalW = 320;
-    const logicalH = 200;
-    const scaleX = width / logicalW;
-    const scaleY = roomViewHeight / logicalH;
-
-    // Clear background
-    ctx.fillStyle = '#020617';
+    ctx.fillStyle = '#0c0a09';
     ctx.fillRect(0, 0, width, height);
 
-    // ==========================================
-    // TOP VIEWPORT: Player 1 (White Spy)
-    // ==========================================
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, width, roomViewHeight);
-    ctx.clip();
+    const paneW = (width - DIVIDER_W) / 2;
+    this.renderPane(ctx, engine, vfx, 'RUSTY', 0, paneW, height, tick);
+    this.renderPane(ctx, engine, vfx, 'SOOT', paneW + DIVIDER_W, paneW, height, tick);
 
-    ctx.save();
-    ctx.scale(scaleX, scaleY);
-
-    const whiteRoom = engine.getRoom(engine.whiteSpy.currentRoomId);
-    RoomRenderer.render(ctx, whiteRoom, logicalW, logicalH, tick);
-
-    // Draw White Spy
-    SpyRenderer.render(ctx, engine.whiteSpy, tick);
-
-    // If Black Spy is in same room, draw them too!
-    if (engine.blackSpy.currentRoomId === engine.whiteSpy.currentRoomId) {
-      SpyRenderer.render(ctx, engine.blackSpy, tick);
-    }
-
-    // Render VFX in White Viewport if occurring in White Spy's room
-    vfx.render(ctx);
-
-    ctx.restore();
-
-    // Surveillance Camera HUD Overlay (Top-Left)
-    this.renderCameraBanner(ctx, 'CAM 01 - WHITE SPY', whiteRoom.name, 12, 16, tick, '#38bdf8');
-
-    ctx.restore();
-
-    // White Spy Trapulator HUD
-    HudRenderer.render(ctx, engine.whiteSpy, engine.remainingSeconds, 0, roomViewHeight, width, hudHeight, tick);
-
-    // ==========================================
-    // SPLIT DIVIDER BAR
-    // ==========================================
-    this.renderSplitDivider(ctx, width, halfHeight);
-
-    // ==========================================
-    // BOTTOM VIEWPORT: Player 2 / AI (Black Spy)
-    // ==========================================
-    const bottomRoomY = halfHeight + 2;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, bottomRoomY, width, roomViewHeight);
-    ctx.clip();
-
-    ctx.save();
-    ctx.translate(0, bottomRoomY);
-    ctx.scale(scaleX, scaleY);
-
-    const blackRoom = engine.getRoom(engine.blackSpy.currentRoomId);
-    RoomRenderer.render(ctx, blackRoom, logicalW, logicalH, tick);
-
-    // Draw Black Spy
-    SpyRenderer.render(ctx, engine.blackSpy, tick);
-
-    // If White Spy is in same room, draw them too!
-    if (engine.whiteSpy.currentRoomId === engine.blackSpy.currentRoomId) {
-      SpyRenderer.render(ctx, engine.whiteSpy, tick);
-    }
-
-    // Render VFX in Black Viewport if occurring in Black Spy's room
-    vfx.render(ctx);
-
-    ctx.restore();
-
-    // Surveillance Camera HUD Overlay (Bottom-Left)
-    this.renderCameraBanner(ctx, 'CAM 02 - BLACK SPY', blackRoom.name, 12, bottomRoomY + 16, tick, '#ef4444');
-
-    ctx.restore();
-
-    // Black Spy Trapulator HUD
-    HudRenderer.render(
-      ctx,
-      engine.blackSpy,
-      engine.remainingSeconds,
-      0,
-      bottomRoomY + roomViewHeight,
-      width,
-      hudHeight,
-      tick
-    );
-
-    // ==========================================
-    // GAME OVER / VICTORY OVERLAY
-    // ==========================================
     if (engine.isGameOver) {
       this.renderGameOverOverlay(ctx, engine, width, height, tick);
     }
   }
 
-  /**
-   * Surveillance Camera OSD text ("● REC CAM 01 | ROOM NAME").
-   */
-  private static renderCameraBanner(
+  private static renderPane(
     ctx: CanvasRenderingContext2D,
-    camLabel: string,
-    roomName: string,
-    x: number,
-    y: number,
-    tick: number,
-    color: string
+    engine: GameEngine,
+    vfx: VisualEffects,
+    viewer: RaiderId,
+    paneX: number,
+    paneW: number,
+    paneH: number,
+    tick: number
   ): void {
+    const scale = paneW / LOGICAL_W;
+    const roomH = LOGICAL_H * scale;
+    const raider = engine.getRaider(viewer);
+    const rival = engine.getRival(viewer);
+    const room = engine.getRoom(raider.currentRoomId);
+
     ctx.save();
-
-    // Blinking Red REC Dot
-    const blink = Math.sin(tick * 0.2) > 0;
-    ctx.fillStyle = blink ? '#ef4444' : '#7f1d1d';
     ctx.beginPath();
-    ctx.arc(x, y - 4, 3.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.rect(paneX, 0, paneW, roomH);
+    ctx.clip();
 
-    ctx.font = 'bold 10px "Courier New", monospace';
-    ctx.fillStyle = color;
-    ctx.fillText(`${camLabel} // ${roomName.toUpperCase()}`, x + 8, y);
+    ctx.translate(paneX, 0);
+    ctx.save();
+    ctx.scale(scale, scale);
+
+    RoomRenderer.render(ctx, room, viewer, tick);
+
+    // Draw back to front so whoever is lower down the room overlaps the other
+    const occupants = rival.currentRoomId === raider.currentRoomId ? [raider, rival] : [raider];
+    occupants.sort((a, b) => a.y - b.y);
+    for (const occupant of occupants) {
+      RaiderRenderer.render(ctx, occupant, tick);
+    }
+
+    vfx.render(ctx, room.id);
 
     ctx.restore();
+
+    this.renderRoomLabel(ctx, room.name, RAIDER_PALETTES[viewer].bandana);
+
+    ctx.restore();
+
+    HudRenderer.render(ctx, raider, paneX, roomH, paneW, paneH - roomH, tick);
   }
 
-  /**
-   * Surveillance split console divider line with metallic bevel.
-   */
-  private static renderSplitDivider(ctx: CanvasRenderingContext2D, width: number, halfHeight: number): void {
+  private static renderRoomLabel(ctx: CanvasRenderingContext2D, roomName: string, accent: string): void {
     ctx.save();
-    const divH = 4;
-    const divY = halfHeight - divH / 2;
+    ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
+    const padding = 10;
+    const labelW = ctx.measureText(roomName).width + padding * 2;
 
-    const divGrad = ctx.createLinearGradient(0, divY, width, divY);
-    divGrad.addColorStop(0, '#0284c7');
-    divGrad.addColorStop(0.5, '#38bdf8');
-    divGrad.addColorStop(1, '#0284c7');
-    ctx.fillStyle = divGrad;
-    ctx.fillRect(0, divY, width, divH);
-
-    // Center MAD Magazine / Spy vs Spy Insignia badge
-    const badgeW = 90;
-    const badgeH = 14;
-    const bx = width / 2 - badgeW / 2;
-    const by = halfHeight - badgeH / 2;
-
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(bx, by, badgeW, badgeH);
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx, by, badgeW, badgeH);
-
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = '900 8px "Courier New", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('SIMULVISION', width / 2, by + 10);
-
+    ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
+    ctx.fillRect(0, 0, labelW, 26);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 26, labelW, 2);
+    ctx.fillStyle = '#fafaf9';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(roomName, padding, 14);
     ctx.restore();
   }
 
@@ -197,53 +104,45 @@ export class SplitScreenRenderer {
     tick: number
   ): void {
     ctx.save();
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
+    ctx.fillStyle = 'rgba(12, 10, 9, 0.8)';
     ctx.fillRect(0, 0, width, height);
 
     ctx.textAlign = 'center';
     const cx = width / 2;
     const cy = height / 2;
+    const accent = engine.winner ? RAIDER_PALETTES[engine.winner].bandana : '#94a3b8';
 
     if (engine.winner) {
-      const isWhite = engine.winner === 'WHITE';
-      const winColor = isWhite ? '#f8fafc' : '#ef4444';
-
-      // Confetti Sparkles
-      for (let i = 0; i < 30; i++) {
-        const seed = (i * 37 + tick) % 200;
-        const px = (cx - 200) + ((i * 41) % 400);
-        const py = (cy - 100) + seed;
-        ctx.fillStyle = i % 2 === 0 ? '#facc15' : '#38bdf8';
-        ctx.fillRect(px, py, 3, 3);
+      // Falling crumbs
+      for (let i = 0; i < 40; i++) {
+        const px = (i * 83) % width;
+        const py = ((i * 47 + tick * (1 + (i % 3))) % (height + 20)) - 10;
+        ctx.fillStyle = i % 2 === 0 ? '#fde047' : '#fb923c';
+        ctx.fillRect(px, py, 5, 5);
       }
-
-      // Banner Box
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(cx - 240, cy - 70, 480, 140);
-      ctx.strokeStyle = winColor;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(cx - 240, cy - 70, 480, 140);
-
-      ctx.fillStyle = winColor;
-      ctx.font = '900 32px "Courier New", monospace';
-      ctx.fillText(`🏆 ${engine.winner} SPY WINS! 🏆`, cx, cy - 20);
-
-      ctx.fillStyle = '#facc15';
-      ctx.font = 'bold 15px "Courier New", monospace';
-      ctx.fillText('✈ Escaped the Embassy with all Secret Documents! ✈', cx, cy + 18);
-
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '12px "Courier New", monospace';
-      ctx.fillText('Press [SPACE] or Reload to Infiltrate Again', cx, cy + 46);
-    } else {
-      ctx.fillStyle = '#ef4444';
-      ctx.font = '900 30px "Courier New", monospace';
-      ctx.fillText('⌛ TIME EXPIRED! ⌛', cx, cy - 15);
-
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'bold 15px "Courier New", monospace';
-      ctx.fillText('The Embassy Lockdown Triggered! Both Spies Caught!', cx, cy + 20);
     }
+
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(cx - 320, cy - 90, 640, 180);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(cx - 320, cy - 90, 640, 180);
+
+    ctx.fillStyle = '#fafaf9';
+    ctx.font = '900 44px "Trebuchet MS", "Arial Black", sans-serif';
+    ctx.fillText(engine.winner ? `${engine.winner} WINS THE FEAST!` : 'THE SUN IS UP!', cx, cy - 18);
+
+    ctx.fillStyle = '#fde68a';
+    ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
+    ctx.fillText(
+      engine.winner ? 'Out through the garden gate with a full basket.' : 'Both raiders nodded off. Nobody gets dinner.',
+      cx,
+      cy + 22
+    );
+
+    ctx.fillStyle = '#a8a29e';
+    ctx.font = '15px "Trebuchet MS", sans-serif';
+    ctx.fillText('Press Space to raid again', cx, cy + 58);
 
     ctx.restore();
   }

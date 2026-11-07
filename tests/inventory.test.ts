@@ -1,70 +1,85 @@
 import { describe, it, expect } from 'vitest';
-import { Inventory } from '../src/core/spy/inventory';
-import { CounterItemType, SecretItemType, TrapType } from '../src/core/types';
+import { Inventory } from '../src/core/raider/inventory';
+import { ToolType, LootType, TrapType } from '../src/core/types';
 
-describe('Spy Inventory System', () => {
-  it('allows holding only one secret item without a briefcase', () => {
+describe('Raider Inventory System', () => {
+  it('allows carrying only one item without a basket', () => {
     const inv = new Inventory();
-    expect(inv.hasBriefcase).toBe(false);
+    expect(inv.hasBasket).toBe(false);
 
-    // Pick up passport
-    const res1 = inv.pickupItem(SecretItemType.PASSPORT);
+    const res1 = inv.pickupItem(LootType.PIZZA);
     expect(res1.success).toBe(true);
-    expect(inv.heldSingleItem).toBe(SecretItemType.PASSPORT);
+    expect(inv.heldItem).toBe(LootType.PIZZA);
 
-    // Pick up money: previous item is dropped
-    const res2 = inv.pickupItem(SecretItemType.MONEY);
+    // Pick up fish: previous item is dropped
+    const res2 = inv.pickupItem(LootType.FISH);
     expect(res2.success).toBe(true);
-    expect(res2.droppedItem).toBe(SecretItemType.PASSPORT);
-    expect(inv.heldSingleItem).toBe(SecretItemType.MONEY);
+    expect(res2.droppedItem).toBe(LootType.PIZZA);
+    expect(inv.heldItem).toBe(LootType.FISH);
   });
 
-  it('collects all items once briefcase is acquired', () => {
+  it('collects all items once basket is acquired', () => {
     const inv = new Inventory();
-    // Start with passport
-    inv.pickupItem(SecretItemType.PASSPORT);
+    inv.pickupItem(LootType.PIZZA);
 
-    // Find briefcase: passport automatically stows into briefcase
-    inv.pickupItem(SecretItemType.BRIEFCASE);
-    expect(inv.hasBriefcase).toBe(true);
-    expect(inv.heldSingleItem).toBeUndefined();
-    expect(inv.collectedItems.has(SecretItemType.PASSPORT)).toBe(true);
+    // Find basket: pizza automatically goes into it
+    inv.pickupItem(LootType.BASKET);
+    expect(inv.hasBasket).toBe(true);
+    expect(inv.heldItem).toBeUndefined();
+    expect(inv.collectedItems.has(LootType.PIZZA)).toBe(true);
 
-    // Add remaining required items
-    inv.pickupItem(SecretItemType.SECRET_PLANS);
-    inv.pickupItem(SecretItemType.MONEY);
-    expect(inv.hasAllEscapeItems()).toBe(false);
+    inv.pickupItem(LootType.CHEESE);
+    inv.pickupItem(LootType.FISH);
+    expect(inv.hasFullFeast()).toBe(false);
 
-    inv.pickupItem(SecretItemType.KEY);
-    expect(inv.hasAllEscapeItems()).toBe(true);
+    inv.pickupItem(LootType.HONEY);
+    expect(inv.hasFullFeast()).toBe(true);
   });
 
-  it('manages traps and counter tools', () => {
-    const inv = new Inventory({ BOMB: 2 });
-    expect(inv.hasTrap(TrapType.BOMB)).toBe(true);
-
-    expect(inv.useTrap(TrapType.BOMB)).toBe(true);
-    expect(inv.trapsAvailable[TrapType.BOMB]).toBe(1);
-
-    expect(inv.useTrap(TrapType.BOMB)).toBe(true);
-    expect(inv.hasTrap(TrapType.BOMB)).toBe(false);
-    expect(inv.useTrap(TrapType.BOMB)).toBe(false);
-
-    inv.setActiveTool(CounterItemType.UMBRELLA);
-    expect(inv.activeTool).toBe(CounterItemType.UMBRELLA);
-  });
-
-  it('drops all items when spy dies', () => {
+  it('does not count a full feast without the basket', () => {
     const inv = new Inventory();
-    inv.pickupItem(SecretItemType.BRIEFCASE);
-    inv.pickupItem(SecretItemType.PASSPORT);
-    inv.pickupItem(SecretItemType.MONEY);
+    [LootType.PIZZA, LootType.CHEESE, LootType.HONEY, LootType.FISH].forEach((item) => inv.collectedItems.add(item));
+    expect(inv.hasFullFeast()).toBe(false);
+  });
 
-    const dropped = inv.dropAllOnDeath();
-    expect(dropped).toContain(SecretItemType.BRIEFCASE);
-    expect(dropped).toContain(SecretItemType.PASSPORT);
-    expect(dropped).toContain(SecretItemType.MONEY);
-    expect(inv.hasBriefcase).toBe(false);
+  it('knows which loot it can take without dropping something', () => {
+    const inv = new Inventory();
+    expect(inv.canCarryWithoutDropping(LootType.PIZZA)).toBe(true);
+
+    inv.pickupItem(LootType.PIZZA);
+    expect(inv.canCarryWithoutDropping(LootType.FISH)).toBe(false);
+    expect(inv.canCarryWithoutDropping(LootType.BASKET)).toBe(true);
+
+    inv.pickupItem(LootType.BASKET);
+    expect(inv.canCarryWithoutDropping(LootType.FISH)).toBe(true);
+  });
+
+  it('manages traps and tools', () => {
+    const inv = new Inventory({ SNAP_TRAP: 2 });
+    expect(inv.hasTrap(TrapType.SNAP_TRAP)).toBe(true);
+
+    expect(inv.useTrap(TrapType.SNAP_TRAP)).toBe(true);
+    expect(inv.trapsAvailable[TrapType.SNAP_TRAP]).toBe(1);
+
+    expect(inv.useTrap(TrapType.SNAP_TRAP)).toBe(true);
+    expect(inv.hasTrap(TrapType.SNAP_TRAP)).toBe(false);
+    expect(inv.useTrap(TrapType.SNAP_TRAP)).toBe(false);
+
+    inv.setActiveTool(ToolType.BROOM);
+    expect(inv.activeTool).toBe(ToolType.BROOM);
+  });
+
+  it('drops all loot when knocked out', () => {
+    const inv = new Inventory();
+    inv.pickupItem(LootType.BASKET);
+    inv.pickupItem(LootType.PIZZA);
+    inv.pickupItem(LootType.FISH);
+
+    const dropped = inv.dropAllLoot();
+    expect(dropped).toContain(LootType.BASKET);
+    expect(dropped).toContain(LootType.PIZZA);
+    expect(dropped).toContain(LootType.FISH);
+    expect(inv.hasBasket).toBe(false);
     expect(inv.collectedItems.size).toBe(0);
   });
 });

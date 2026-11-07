@@ -1,13 +1,13 @@
 /**
- * Spy vs. Spy - Main Application Entry Point
- * Orchestrates Engine, Keyboard, AI, Audio, VFX, and Simulvision Split-Screen Viewports.
+ * Midnight Snackdown - Main Application Entry Point
+ * Orchestrates Engine, Keyboard, AI, Audio, VFX, and the Split-Screen Renderer.
  */
 
 import { GameEngine } from './core/engine';
 import { SplitScreenRenderer } from './renderer/splitScreen';
 import { KeyboardController } from './input/keyboard';
-import { SpyAI } from './input/ai/spyAI';
-import { RetroSoundSynth } from './audio/retroSynth';
+import { RivalAI } from './input/ai/rivalAI';
+import { GameAudio } from './audio/gameAudio';
 import { VisualEffects } from './renderer/visualEffects';
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -25,49 +25,69 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Initialize Core Systems
   const engine = new GameEngine();
-  const keyboard = new KeyboardController(engine);
-  const ai = new SpyAI(engine);
-  const audio = new RetroSoundSynth();
+  const keyboard = new KeyboardController(engine, 'RUSTY');
+  const ai = new RivalAI(engine, 'SOOT');
+  const audio = new GameAudio();
   const vfx = new VisualEffects();
 
+  // Sound needs a user gesture; the game-over screen restarts on a fresh Space press.
+  window.addEventListener('keydown', (e) => {
+    audio.unlock();
+    if (engine.isGameOver && e.code === 'Space' && !e.repeat) {
+      window.location.reload();
+    }
+  });
+  window.addEventListener('pointerdown', () => audio.unlock());
+
   // Attach Audio Feedback & Visual Effects to Engine Events
-  engine.events.on('SPY_STARTED_SEARCH', () => audio.playSearch());
+  engine.events.on('RAIDER_STARTED_SEARCH', () => audio.playRummage());
 
-  engine.events.on('ITEM_FOUND', (payload) => {
-    audio.playItemFound();
-    const spy = engine.getSpy(payload.spy);
-    vfx.addItemFound(spy.x, spy.y, payload.item.replace('_', ' '));
+  engine.events.on('LOOT_FOUND', (payload) => {
+    audio.playLootFound();
+    const raider = engine.getRaider(payload.raider);
+    vfx.addLootFound(raider.currentRoomId, raider.x, raider.y, payload.item);
   });
 
-  engine.events.on('TRAP_TRIGGERED', (payload) => {
-    audio.playTrapSpring();
-    const victim = engine.getSpy(payload.victim);
-    vfx.addExplosion(victim.x, victim.y);
+  engine.events.on('TRAP_SET', () => audio.playTrapSet());
+
+  engine.events.on('TRAP_SPRUNG', (payload) => {
+    audio.playTrapSprung();
+    const victim = engine.getRaider(payload.victim);
+    vfx.addTrapSprung(victim.currentRoomId, victim.x, victim.y, payload.trapType);
   });
 
-  engine.events.on('TRAP_DEFUSED', (payload) => {
-    audio.playDefuse();
-    const defuser = engine.getSpy(payload.defuser);
-    vfx.addDefused(defuser.x, defuser.y);
+  engine.events.on('TRAP_CLEARED', (payload) => {
+    audio.playTrapCleared();
+    const raider = engine.getRaider(payload.clearedBy);
+    vfx.addTrapCleared(raider.currentRoomId, raider.x, raider.y);
   });
 
   engine.events.on('COMBAT_HIT', (payload) => {
-    audio.playHit();
-    const target = engine.getSpy(payload.target);
-    vfx.addCombatHit(target.x, target.y);
+    audio.playSwat();
+    const target = engine.getRaider(payload.target);
+    vfx.addSwatHit(target.currentRoomId, target.x, target.y);
   });
 
-  engine.events.on('SPY_KILLED', (payload) => {
-    const victim = engine.getSpy(payload.victim);
-    vfx.addAngelFeathers(victim.x, victim.y);
+  engine.events.on('RAIDER_KNOCKED_OUT', (payload) => {
+    const victim = engine.getRaider(payload.victim);
+    vfx.addKnockout(victim.currentRoomId, victim.x, victim.y);
+  });
+
+  engine.events.on('GATE_REFUSED', (payload) => {
+    audio.playGateRefused();
+    const raider = engine.getRaider(payload.raider);
+    vfx.addGateRefused(raider.currentRoomId, raider.x, raider.y);
   });
 
   engine.events.on('MATCH_WON', () => audio.playWin());
+  engine.events.on('TIME_UP', () => audio.playTimeUp());
 
   // Fullscreen Toggle
   const fullscreenBtn = document.getElementById('fullscreen-btn');
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => {
+      // Give focus back to the game so Space searches rather than re-pressing this button.
+      fullscreenBtn.blur();
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(() => {});
       } else {
@@ -76,7 +96,7 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('fullscreenchange', () => {
-      fullscreenBtn.textContent = document.fullscreenElement ? '🗗 Exit Fullscreen' : '⛶ Fullscreen';
+      fullscreenBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
     });
   }
 
@@ -109,12 +129,10 @@ window.addEventListener('DOMContentLoaded', () => {
       tickCounter++;
     }
 
-    // Render dual split-screen viewports
     SplitScreenRenderer.render(ctx!, engine, vfx, canvas.width, canvas.height, tickCounter);
 
     requestAnimationFrame(gameLoop);
   }
 
   requestAnimationFrame(gameLoop);
-  console.log('Spy vs. Spy: Visuals upgraded, running at 60 FPS.');
 });

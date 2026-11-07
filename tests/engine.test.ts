@@ -1,153 +1,356 @@
 import { describe, it, expect, vi } from 'vitest';
-import { GameEngine } from '../src/core/engine';
-import { SecretItemType, TrapType } from '../src/core/types';
+import { LootType, ToolType, TrapType } from '../src/core/types';
+import { RUSTY_START_ROOM, SOOT_START_ROOM } from '../src/core/room/houseLayout';
+import { newEngine, packFeast, runTicks, standAtDoor } from './helpers';
 
 describe('GameEngine Integration & Simulation', () => {
-  it('initializes match with 180s countdown and spies in start rooms', () => {
-    const engine = new GameEngine();
-    expect(engine.remainingSeconds).toBe(180);
-    expect(engine.whiteSpy.currentRoomId).toBe('room_1');
-    expect(engine.blackSpy.currentRoomId).toBe('room_8');
+  it('initializes match with 180s clocks and raiders in start rooms', () => {
+    const engine = newEngine();
+    expect(engine.rusty.clockSeconds).toBe(180);
+    expect(engine.soot.clockSeconds).toBe(180);
+    expect(engine.rusty.currentRoomId).toBe(RUSTY_START_ROOM);
+    expect(engine.soot.currentRoomId).toBe(SOOT_START_ROOM);
     expect(engine.isGameOver).toBe(false);
   });
 
-  it('updates countdown clock each 60 ticks', () => {
-    const engine = new GameEngine();
+  it('updates both clocks each 60 ticks', () => {
+    const engine = newEngine();
     const tickListener = vi.fn();
     engine.events.on('CLOCK_TICK', tickListener);
 
-    // 60 ticks = 1 second elapsed
-    for (let i = 0; i < 60; i++) {
-      engine.tick();
-    }
+    runTicks(engine, 60);
 
-    expect(engine.remainingSeconds).toBe(179);
-    expect(tickListener).toHaveBeenCalledWith({ remainingSeconds: 179 });
+    expect(engine.rusty.clockSeconds).toBe(179);
+    expect(engine.soot.clockSeconds).toBe(179);
+    expect(tickListener).toHaveBeenCalledWith({ raider: 'RUSTY', clockSeconds: 179 });
   });
 
-  it('allows white spy to search safe in room_1 and acquire Briefcase', () => {
-    const engine = new GameEngine();
-    const whiteSpy = engine.whiteSpy;
+  it('lets a raider search furniture and take the loot inside', () => {
+    const engine = newEngine();
+    const rusty = engine.rusty;
+    const fridge = engine.getRoom('garage').furniture[1];
+    fridge.heldItem = LootType.BASKET;
 
-    // Move white spy near safe (safe is at x: 60, y: 60 in room_1)
-    whiteSpy.x = 60;
-    whiteSpy.y = 60;
+    rusty.x = fridge.x + fridge.width / 2;
+    rusty.y = 50;
 
-    engine.interactSpy('WHITE');
-    expect(whiteSpy.state).toBe('SEARCHING');
+    engine.interactRaider('RUSTY');
+    expect(rusty.state).toBe('SEARCHING');
 
-    // Simulate search duration (60 ticks)
-    for (let i = 0; i < 60; i++) {
-      engine.tick();
-    }
+    runTicks(engine, 60);
 
-    expect(whiteSpy.state).toBe('IDLE');
-    expect(whiteSpy.inventory.hasBriefcase).toBe(true);
+    expect(rusty.state).toBe('IDLE');
+    expect(rusty.inventory.hasBasket).toBe(true);
+    expect(fridge.searched).toBe(true);
+    expect(fridge.heldItem).toBeUndefined();
   });
 
-  it('applies time penalty and respawn cycle when a spy is killed', () => {
-    const engine = new GameEngine();
-    const killListener = vi.fn();
-    const respawnListener = vi.fn();
+  it('applies time penalty and wake-up cycle when a raider is knocked out', () => {
+    const engine = newEngine();
+    const knockoutListener = vi.fn();
+    const wakeListener = vi.fn();
 
-    engine.events.on('SPY_KILLED', killListener);
-    engine.events.on('SPY_RESPAWNED', respawnListener);
+    engine.events.on('RAIDER_KNOCKED_OUT', knockoutListener);
+    engine.events.on('RAIDER_WOKE_UP', wakeListener);
 
-    const initialTime = engine.remainingSeconds;
-    engine.killSpy(engine.whiteSpy, 'COMBAT', 'BLACK');
+    const initialTime = engine.rusty.clockSeconds;
+    engine.knockOutRaider(engine.rusty, 'COMBAT', 'SOOT');
 
-    expect(engine.whiteSpy.state).toBe('DEAD_ANGEL');
-    expect(engine.remainingSeconds).toBe(initialTime - engine.DEATH_TIME_PENALTY_SECONDS);
-    expect(killListener).toHaveBeenCalled();
+    expect(engine.rusty.state).toBe('KNOCKED_OUT');
+    expect(engine.rusty.clockSeconds).toBe(initialTime - engine.KNOCKOUT_TIME_PENALTY_SECONDS);
+    expect(knockoutListener).toHaveBeenCalled();
 
-    // Fast-forward respawn ticks (300 ticks = 5 seconds)
-    for (let i = 0; i < 300; i++) {
-      engine.tick();
-    }
+    // Fast-forward wake-up ticks (300 ticks = 5 seconds)
+    runTicks(engine, 300);
 
-    expect(engine.whiteSpy.state).toBe('IDLE');
-    expect(engine.whiteSpy.health).toBe(100);
-    expect(respawnListener).toHaveBeenCalled();
+    expect(engine.rusty.state).toBe('IDLE');
+    expect(engine.rusty.health).toBe(100);
+    expect(wakeListener).toHaveBeenCalled();
   });
 
-  it('triggers MATCH_WON when spy escapes with all required items at airport exit door', () => {
-    const engine = new GameEngine();
-    const whiteSpy = engine.whiteSpy;
+  it('only charges the knockout penalty to the raider who was knocked out', () => {
+    const engine = newEngine();
+    engine.knockOutRaider(engine.rusty, 'COMBAT', 'SOOT');
+    expect(engine.soot.clockSeconds).toBe(180);
+  });
+
+  it('triggers MATCH_WON when a raider leaves with the full feast using the action key', () => {
+    const engine = newEngine();
+    const rusty = engine.rusty;
     const winListener = vi.fn();
     engine.events.on('MATCH_WON', winListener);
 
-    // Give white spy the complete set
-    whiteSpy.inventory.pickupItem(SecretItemType.BRIEFCASE);
-    whiteSpy.inventory.pickupItem(SecretItemType.PASSPORT);
-    whiteSpy.inventory.pickupItem(SecretItemType.SECRET_PLANS);
-    whiteSpy.inventory.pickupItem(SecretItemType.MONEY);
-    whiteSpy.inventory.pickupItem(SecretItemType.KEY);
+    packFeast(rusty);
+    expect(rusty.inventory.hasFullFeast()).toBe(true);
 
-    expect(whiteSpy.inventory.hasAllEscapeItems()).toBe(true);
-
-    // Move to airport exit room (room_4) near east door
-    whiteSpy.currentRoomId = 'room_4';
-    whiteSpy.x = 295;
-    whiteSpy.y = 120;
-
-    engine.interactSpy('WHITE');
+    standAtDoor(rusty, 'porch', 295, 120);
+    engine.interactRaider('RUSTY');
 
     expect(engine.isGameOver).toBe(true);
-    expect(engine.winner).toBe('WHITE');
-    expect(winListener).toHaveBeenCalledWith({
-      winner: 'WHITE',
-      reason: 'AIRPORT_ESCAPE'
-    });
+    expect(engine.winner).toBe('RUSTY');
+    expect(winListener).toHaveBeenCalledWith({ winner: 'RUSTY' });
   });
 
-  it('arms furniture with bomb and kills victim when triggered', () => {
-    const engine = new GameEngine();
-    const blackSpy = engine.blackSpy;
-    const whiteSpy = engine.whiteSpy;
+  it('triggers MATCH_WON when a raider walks out with the full feast', () => {
+    const engine = newEngine();
+    packFeast(engine.rusty);
+    standAtDoor(engine.rusty, 'porch', 290, 120);
 
-    // Black spy in room_1 near safe (x: 60, y: 60)
-    blackSpy.currentRoomId = 'room_1';
-    blackSpy.x = 60;
-    blackSpy.y = 60;
+    engine.moveRaider('RUSTY', 1, 0);
 
-    const armed = engine.armTrap('BLACK', TrapType.BOMB);
-    expect(armed).toBe(true);
+    expect(engine.winner).toBe('RUSTY');
+  });
 
-    // White spy enters room_1 and searches the safe
-    whiteSpy.currentRoomId = 'room_1';
-    whiteSpy.x = 60;
-    whiteSpy.y = 60;
+  it('refuses the gate without the full feast and keeps the raider in the room', () => {
+    const engine = newEngine();
+    const refused = vi.fn();
+    engine.events.on('GATE_REFUSED', refused);
+    standAtDoor(engine.rusty, 'porch', 299, 120);
 
-    engine.interactSpy('WHITE');
-    // Complete search
-    for (let i = 0; i < 60; i++) {
+    engine.moveRaider('RUSTY', 1, 0);
+
+    expect(engine.isGameOver).toBe(false);
+    expect(refused).toHaveBeenCalledTimes(1);
+    expect(engine.rusty.currentRoomId).toBe('porch');
+    expect(engine.rusty.x).toBeLessThanOrEqual(engine.getRoom('porch').bounds.maxX);
+
+    // Pushing against the gate does not repeat the refusal every tick
+    engine.moveRaider('RUSTY', 1, 0);
+    expect(refused).toHaveBeenCalledTimes(1);
+  });
+
+  it('never lets a raider walk through the wall at a refused gate', () => {
+    const engine = newEngine();
+    standAtDoor(engine.rusty, 'porch', 290, 120);
+
+    for (let i = 0; i < 120; i++) {
+      engine.moveRaider('RUSTY', 1, 0);
       engine.tick();
+      expect(engine.rusty.x).toBeLessThanOrEqual(engine.getRoom('porch').bounds.maxX);
     }
+  });
 
-    expect(whiteSpy.state).toBe('DEAD_ANGEL');
+  it('does not let the action key bypass a trap on the gate', () => {
+    const engine = newEngine();
+    const planter = engine.soot;
+    standAtDoor(planter, 'porch', 295, 120);
+    expect(engine.armTrap('SOOT', TrapType.MARBLE_SPILL)).toBe(true);
+
+    packFeast(engine.rusty);
+    standAtDoor(engine.rusty, 'porch', 295, 120);
+    engine.interactRaider('RUSTY');
+
+    expect(engine.isGameOver).toBe(false);
+    expect(engine.rusty.state).toBe('KNOCKED_OUT');
+  });
+
+  it('arms furniture with a trap and knocks out a victim who searches it', () => {
+    const engine = newEngine();
+    const { rusty, soot } = engine;
+    const fridge = engine.getRoom('garage').furniture[1];
+    const x = fridge.x + fridge.width / 2;
+
+    soot.currentRoomId = 'garage';
+    soot.x = x;
+    soot.y = 50;
+
+    expect(engine.armTrap('SOOT', TrapType.SNAP_TRAP)).toBe(true);
+
+    rusty.x = x;
+    rusty.y = 50;
+
+    engine.interactRaider('RUSTY');
+    runTicks(engine, 60);
+
+    expect(rusty.state).toBe('KNOCKED_OUT');
   });
 
   it('smoothly transitions through doors without getting stuck or retriggering', () => {
-    const engine = new GameEngine();
-    const whiteSpy = engine.whiteSpy;
+    const engine = newEngine();
+    const rusty = engine.rusty;
 
-    // Room 1 has an East door leading to Room 2 at x: 298, y: 120
-    expect(whiteSpy.currentRoomId).toBe('room_1');
-    whiteSpy.x = 285;
-    whiteSpy.y = 120;
+    // The garage has an East door leading to the hall at x: 298, y: 120
+    rusty.x = 285;
+    rusty.y = 120;
 
-    // Walk east into the door
-    engine.moveSpy('WHITE', 1, 0);
+    engine.moveRaider('RUSTY', 1, 0);
 
-    // Spy should now be in room_2
-    expect(whiteSpy.currentRoomId).toBe('room_2');
-    expect(whiteSpy.doorCooldown).toBeGreaterThan(0);
+    expect(rusty.currentRoomId).toBe('hall');
+    expect(rusty.doorCooldown).toBeGreaterThan(0);
     // Positioned safely away from the west door (bounds.minX + 35 = 55)
-    expect(whiteSpy.x).toBe(55);
+    expect(rusty.x).toBe(55);
 
-    // Next tick: walking further east into room 2 should keep spy in room 2
-    engine.moveSpy('WHITE', 1, 0);
-    expect(whiteSpy.currentRoomId).toBe('room_2');
-    expect(whiteSpy.x).toBeGreaterThan(55);
+    // Walking further east keeps the raider in the hall
+    engine.moveRaider('RUSTY', 1, 0);
+    expect(rusty.currentRoomId).toBe('hall');
+    expect(rusty.x).toBeGreaterThan(55);
+  });
+
+  it('springs a door trap on a raider coming from the other side', () => {
+    const engine = newEngine();
+    const { rusty, soot } = engine;
+
+    // Soot lays the trap on the hall side of the garage/hall door
+    standAtDoor(soot, 'hall', 40, 120);
+    expect(engine.armTrap('SOOT', TrapType.STATIC_MAT)).toBe(true);
+
+    // Rusty walks into the same door from the garage
+    standAtDoor(rusty, 'garage', 285, 120);
+    engine.moveRaider('RUSTY', 1, 0);
+
+    expect(rusty.state).toBe('KNOCKED_OUT');
+    expect(rusty.currentRoomId).toBe('garage');
+  });
+
+  it('removes a door trap from both sides once it has gone off', () => {
+    const engine = newEngine();
+    const { rusty, soot } = engine;
+    standAtDoor(soot, 'hall', 40, 120);
+    engine.armTrap('SOOT', TrapType.STATIC_MAT);
+
+    rusty.inventory.setActiveTool(ToolType.RUBBER_BOOTS);
+    standAtDoor(rusty, 'garage', 285, 120);
+    engine.moveRaider('RUSTY', 1, 0);
+
+    expect(rusty.currentRoomId).toBe('hall');
+    expect(engine.getRoom('garage').getDoor('EAST')?.armedTrap).toBeUndefined();
+    expect(engine.getRoom('hall').getDoor('WEST')?.armedTrap).toBeUndefined();
+  });
+
+  it('returns to idle when the raider stops moving', () => {
+    const engine = newEngine();
+    engine.moveRaider('RUSTY', 1, 0);
+    expect(engine.rusty.state).toBe('WALKING');
+
+    engine.moveRaider('RUSTY', 0, 0);
+    expect(engine.rusty.state).toBe('IDLE');
+  });
+
+  it('does not emit movement events for a raider standing still', () => {
+    const engine = newEngine();
+    const moved = vi.fn();
+    engine.events.on('RAIDER_MOVED', moved);
+    engine.moveRaider('RUSTY', 0, 0);
+    expect(moved).not.toHaveBeenCalled();
+  });
+
+  it('keeps a swat going while the raider walks', () => {
+    const engine = newEngine();
+    engine.attackRaider('RUSTY');
+    engine.moveRaider('RUSTY', 1, 0);
+    expect(engine.rusty.state).toBe('ATTACKING');
+
+    runTicks(engine, engine.rusty.attackDurationTicks);
+    expect(engine.rusty.state).toBe('IDLE');
+  });
+
+  it('turns to face the rival when swatting', () => {
+    const engine = newEngine();
+    const { rusty, soot } = engine;
+    soot.currentRoomId = rusty.currentRoomId;
+    rusty.x = 100;
+    rusty.y = 100;
+    soot.x = 80;
+    soot.y = 100;
+    rusty.facing = 'EAST';
+
+    engine.attackRaider('RUSTY');
+
+    expect(rusty.facing).toBe('WEST');
+    expect(soot.health).toBeLessThan(100);
+  });
+
+  it('scatters loot at separate spots inside the room on a knockout', () => {
+    const engine = newEngine();
+    const rusty = engine.rusty;
+    packFeast(rusty);
+    rusty.x = 20;
+    rusty.y = 50;
+
+    engine.knockOutRaider(rusty, 'TRAP', 'SOOT');
+
+    const room = engine.getRoom(rusty.currentRoomId);
+    expect(room.groundItems).toHaveLength(5);
+    expect(new Set(room.groundItems.map((gi) => `${gi.x},${gi.y}`)).size).toBeGreaterThan(1);
+    for (const gi of room.groundItems) {
+      expect(gi.x).toBeGreaterThanOrEqual(room.bounds.minX);
+      expect(gi.y).toBeGreaterThanOrEqual(room.bounds.minY);
+    }
+  });
+});
+
+describe('Clocks & End States', () => {
+  it('puts a raider to sleep when their clock runs out while the rival plays on', () => {
+    const engine = newEngine();
+    const outOfTime = vi.fn();
+    engine.events.on('RAIDER_OUT_OF_TIME', outOfTime);
+    engine.rusty.clockSeconds = 1;
+
+    runTicks(engine, 60);
+
+    expect(engine.rusty.state).toBe('OUT_OF_TIME');
+    expect(outOfTime).toHaveBeenCalledWith({ raider: 'RUSTY' });
+    expect(engine.isGameOver).toBe(false);
+    expect(engine.soot.clockSeconds).toBe(179);
+  });
+
+  it('leaves a sleeping raider loot and traps behind for the rival', () => {
+    const engine = newEngine();
+    const { rusty, soot } = engine;
+    rusty.inventory.pickupItem(LootType.BASKET);
+    const fridge = engine.getRoom('garage').furniture[1];
+    rusty.x = fridge.x + fridge.width / 2;
+    rusty.y = 50;
+    engine.armTrap('RUSTY', TrapType.SNAP_TRAP);
+    rusty.clockSeconds = 1;
+
+    runTicks(engine, 60);
+
+    expect(engine.getRoom('garage').groundItems.map((gi) => gi.item)).toContain(LootType.BASKET);
+    expect(fridge.armedTrap?.plantedBy).toBe('RUSTY');
+
+    // The match can still be won by the raider who is left
+    packFeast(soot);
+    standAtDoor(soot, 'porch', 290, 120);
+    engine.moveRaider('SOOT', 1, 0);
+    expect(engine.winner).toBe('SOOT');
+  });
+
+  it('keeps a sleeping raider asleep and unable to act', () => {
+    const engine = newEngine();
+    engine.rusty.clockSeconds = 1;
+    runTicks(engine, 60);
+
+    engine.moveRaider('RUSTY', 1, 0);
+    engine.attackRaider('RUSTY');
+    expect(engine.rusty.state).toBe('OUT_OF_TIME');
+
+    runTicks(engine, 600);
+    expect(engine.rusty.state).toBe('OUT_OF_TIME');
+    expect(engine.rusty.clockSeconds).toBe(0);
+  });
+
+  it('ends in a draw when both clocks have run out', () => {
+    const engine = newEngine(1, 2);
+    const timeUp = vi.fn();
+    engine.events.on('TIME_UP', timeUp);
+
+    runTicks(engine, 120);
+
+    expect(engine.isGameOver).toBe(true);
+    expect(engine.winner).toBeUndefined();
+    expect(timeUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('never shows a negative clock, and a knockout at low time ends that raider at once', () => {
+    const engine = newEngine();
+    engine.rusty.clockSeconds = 5;
+
+    engine.knockOutRaider(engine.rusty, 'TRAP', 'SOOT');
+
+    expect(engine.rusty.clockSeconds).toBe(0);
+    expect(engine.rusty.state).toBe('OUT_OF_TIME');
+    runTicks(engine, 120);
+    expect(engine.rusty.clockSeconds).toBe(0);
   });
 });

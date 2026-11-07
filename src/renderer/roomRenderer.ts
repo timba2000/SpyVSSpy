@@ -1,708 +1,550 @@
 /**
- * High-Fidelity 2D/2.5D Room, Furniture, and Embassy Environment Renderer.
+ * Procedural room renderer: walls, floors, doors, furniture, and loot on the floor.
  */
 
-import { FurnitureType, SecretItemType, TrapType } from '../core/types';
-import { DoorData, FurnitureData, RoomInstance } from '../core/room/room';
+import { FurnitureType, LootType, OUTSIDE, RaiderId, TrapType } from '../core/types';
+import { ArmedTrap, DoorData, FurnitureData, RoomInstance } from '../core/room/room';
+import { RAIDER_PALETTES } from './raiderRenderer';
+
+type FloorStyle = 'boards' | 'tile' | 'carpet' | 'concrete';
+
+interface RoomTheme {
+  wall: string;
+  wallAccent: string;
+  floor: string;
+  floorLine: string;
+  style: FloorStyle;
+}
+
+const ROOM_THEMES: Record<string, RoomTheme> = {
+  garage: { wall: '#3f4a55', wallAccent: '#556270', floor: '#5a6068', floorLine: '#4a4f56', style: 'concrete' },
+  hall: { wall: '#6b5b45', wallAccent: '#80705a', floor: '#8a6a43', floorLine: '#6f5333', style: 'boards' },
+  porch: { wall: '#4d6a57', wallAccent: '#5f7f6b', floor: '#7d6a4f', floorLine: '#65543d', style: 'boards' },
+  pantry: { wall: '#b08d57', wallAccent: '#c4a26d', floor: '#a8a29e', floorLine: '#8f8985', style: 'tile' },
+  cellar: { wall: '#4a3f3a', wallAccent: '#5c504a', floor: '#57504b', floorLine: '#47413d', style: 'concrete' },
+  dining: { wall: '#7a3e48', wallAccent: '#8f4f5a', floor: '#8a5a36', floorLine: '#6f4628', style: 'boards' },
+  lounge: { wall: '#3d5a80', wallAccent: '#4f6e96', floor: '#94775a', floorLine: '#a58a6d', style: 'carpet' },
+  laundry: { wall: '#5f9ea0', wallAccent: '#74b1b3', floor: '#cbd5e1', floorLine: '#aab5c2', style: 'tile' }
+};
+
+const DEFAULT_THEME = ROOM_THEMES.hall;
+
+const WALL_HEIGHT = 56;
+const SIDE_WALL = 20;
 
 export class RoomRenderer {
   /**
-   * Renders the room environment within the given viewport area.
-   * Assumes context is already transformed / scaled to logical 320x200 space.
+   * Renders a room in logical 320x200 space. Hidden traps are only drawn for the
+   * raider who planted them: everyone else has to watch the other half of the screen.
    */
-  public static render(
-    ctx: CanvasRenderingContext2D,
-    room: RoomInstance,
-    viewportW: number = 320,
-    viewportH: number = 200,
-    animationTick: number = 0
-  ): void {
+  public static render(ctx: CanvasRenderingContext2D, room: RoomInstance, viewer: RaiderId, tick: number = 0): void {
     ctx.save();
 
-    // 1. Draw 2.5D Room Enclosure (Walls & Parquet Floor)
-    this.renderRoomShell(ctx, viewportW, viewportH, room.id);
+    this.renderShell(ctx, room);
 
-    // 2. Draw Doors (North, South, East, West) with 3D Architraves
     for (const door of room.doors) {
-      this.renderDoor(ctx, door, room.isAirportExit && door.direction === 'EAST', animationTick);
+      this.renderDoor(ctx, door, tick);
+      if (door.armedTrap?.plantedBy === viewer) {
+        this.renderDoorTrap(ctx, door, door.armedTrap, tick);
+      }
     }
 
-    // 3. Draw Furniture with Depth, Highlights & Open/Searched States
     for (const furn of room.furniture) {
-      this.renderFurniture(ctx, furn, animationTick);
+      this.renderFurniture(ctx, furn);
+      if (furn.armedTrap?.plantedBy === viewer) {
+        this.renderOwnTrapMarker(ctx, furn, viewer, tick);
+      }
     }
 
-    // 4. Draw Dropped Ground Items with Pulsing Halo
     for (const groundItem of room.groundItems) {
-      this.renderGroundItem(ctx, groundItem.item, groundItem.x, groundItem.y, animationTick);
+      this.renderFloorLoot(ctx, groundItem.item, groundItem.x, groundItem.y, tick);
     }
 
     ctx.restore();
   }
 
-  /**
-   * Renders the walls, wainscoting, crown molding, and parquet floor with perspective.
-   */
-  private static renderRoomShell(
-    ctx: CanvasRenderingContext2D,
-    w: number,
-    h: number,
-    roomId: string
-  ): void {
-    const wallHeight = 56;
-    const sideWallWidth = 20;
+  private static renderShell(ctx: CanvasRenderingContext2D, room: RoomInstance): void {
+    const theme = ROOM_THEMES[room.id] ?? DEFAULT_THEME;
+    const w = 320;
+    const h = 200;
 
-    // Room tint variation based on room number for distinct visual identity
-    const roomNum = parseInt(roomId.replace('room_', '')) || 1;
-    const wallColors = [
-      { top: '#1e293b', wainscot: '#0f172a', trim: '#334155' }, // Navy
-      { top: '#27272a', wainscot: '#18181b', trim: '#3f3f46' }, // Charcoal
-      { top: '#1c1917', wainscot: '#292524', trim: '#44403c' }, // Warm Umber
-      { top: '#142823', wainscot: '#0a1714', trim: '#1e3a33' }, // British Racing Green
-      { top: '#2e1065', wainscot: '#1e0847', trim: '#3b0764' }, // Royal Plum
-      { top: '#31101e', wainscot: '#1f0712', trim: '#4c1d34' }, // Velvet Crimson
-      { top: '#172554', wainscot: '#0f172a', trim: '#1e3a8a' }, // Embassy Blue
-      { top: '#1e293b', wainscot: '#0f172a', trim: '#334155' }  // Airport Grey
-    ];
-    const palette = wallColors[(roomNum - 1) % wallColors.length];
+    // Back wall with a dado rail, moonlit by the window
+    ctx.fillStyle = theme.wall;
+    ctx.fillRect(0, 0, w, WALL_HEIGHT);
+    ctx.fillStyle = theme.wallAccent;
+    ctx.fillRect(0, 36, w, 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, WALL_HEIGHT - 3, w, 3);
 
-    // --- Back Wall ---
-    ctx.fillStyle = palette.top;
-    ctx.fillRect(0, 0, w, wallHeight);
-
-    // Wall Wallpaper Stripes / Damask Texture
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
-    for (let x = 0; x < w; x += 12) {
-      ctx.fillRect(x, 0, 6, wallHeight - 14);
+    if (!room.getDoor('NORTH')) {
+      this.renderWindow(ctx, 142, 10);
     }
 
-    // Crown Molding at Ceiling
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, w, 3);
-    ctx.fillStyle = palette.trim;
-    ctx.fillRect(0, 3, w, 2);
-
-    // Picture Rail Trim
-    ctx.fillStyle = '#b45309';
-    ctx.fillRect(0, 18, w, 2);
-
-    // Wainscoting / Wood Paneling (lower back wall)
-    ctx.fillStyle = palette.wainscot;
-    ctx.fillRect(0, wallHeight - 14, w, 14);
-    ctx.fillStyle = palette.trim;
-    ctx.fillRect(0, wallHeight - 14, w, 2);
-
-    // Baseboard Skirting
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(0, wallHeight - 4, w, 4);
-
-    // --- Side Walls (Receding Perspective) ---
-    // Left Wall
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(sideWallWidth, wallHeight);
-    ctx.lineTo(sideWallWidth, h);
-    ctx.lineTo(0, h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#334155';
-    ctx.stroke();
-
-    // Right Wall
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.moveTo(w, 0);
-    ctx.lineTo(w - sideWallWidth, wallHeight);
-    ctx.lineTo(w - sideWallWidth, h);
-    ctx.lineTo(w, h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#334155';
-    ctx.stroke();
-
-    // --- Floor (Polished Parquet Hardwood) ---
-    const floorY = wallHeight;
-    const floorH = h - floorY;
-
-    // Floor Base Gradient (warm embassy wood)
-    const floorGrad = ctx.createLinearGradient(0, floorY, 0, h);
-    floorGrad.addColorStop(0, '#78350f');
-    floorGrad.addColorStop(0.5, '#92400e');
-    floorGrad.addColorStop(1, '#b45309');
-    ctx.fillStyle = floorGrad;
-    ctx.fillRect(sideWallWidth, floorY, w - sideWallWidth * 2, floorH);
-
-    // Parquet Checker / Isometric Floor Planks
+    // Floor
+    ctx.fillStyle = theme.floor;
+    ctx.fillRect(SIDE_WALL, WALL_HEIGHT, w - SIDE_WALL * 2, h - WALL_HEIGHT);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(sideWallWidth, floorY, w - sideWallWidth * 2, floorH);
+    ctx.rect(SIDE_WALL, WALL_HEIGHT, w - SIDE_WALL * 2, h - WALL_HEIGHT);
     ctx.clip();
+    this.renderFloorPattern(ctx, theme, w, h);
 
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    // Night-time pool of moonlight
+    const moonlight = ctx.createRadialGradient(160, 110, 10, 160, 120, 170);
+    moonlight.addColorStop(0, 'rgba(191, 219, 254, 0.14)');
+    moonlight.addColorStop(1, 'rgba(8, 10, 30, 0.42)');
+    ctx.fillStyle = moonlight;
+    ctx.fillRect(0, WALL_HEIGHT, w, h - WALL_HEIGHT);
+    ctx.restore();
+
+    // Side walls, shaded darker to read as receding
+    ctx.fillStyle = theme.wall;
+    for (const [outer, inner] of [
+      [0, SIDE_WALL],
+      [w, w - SIDE_WALL]
+    ]) {
+      ctx.beginPath();
+      ctx.moveTo(outer, 0);
+      ctx.lineTo(inner, WALL_HEIGHT);
+      ctx.lineTo(inner, h);
+      ctx.lineTo(outer, h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillRect(0, 0, SIDE_WALL, h);
+    ctx.fillRect(w - SIDE_WALL, 0, SIDE_WALL, h);
+
+    // Room dimming from the top, to keep the sleeping house at night
+    ctx.fillStyle = 'rgba(10, 12, 40, 0.28)';
+    ctx.fillRect(0, 0, w, WALL_HEIGHT);
+  }
+
+  private static renderFloorPattern(ctx: CanvasRenderingContext2D, theme: RoomTheme, w: number, h: number): void {
+    ctx.strokeStyle = theme.floorLine;
+    ctx.fillStyle = theme.floorLine;
     ctx.lineWidth = 1;
 
-    // Horizontal plank lines (perspective compression)
-    for (let y = floorY; y <= h; y += 14) {
-      ctx.beginPath();
-      ctx.moveTo(sideWallWidth, y);
-      ctx.lineTo(w - sideWallWidth, y);
-      ctx.stroke();
+    switch (theme.style) {
+      case 'boards':
+        for (let y = WALL_HEIGHT; y < h; y += 12) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(w, y);
+          ctx.stroke();
+          const offset = ((y - WALL_HEIGHT) / 12) % 2 === 0 ? 0 : 30;
+          for (let x = SIDE_WALL + offset; x < w; x += 60) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x, y + 12);
+            ctx.stroke();
+          }
+        }
+        break;
+      case 'tile':
+        for (let y = WALL_HEIGHT; y < h; y += 18) {
+          for (let x = SIDE_WALL; x < w; x += 18) {
+            if (((x - SIDE_WALL) / 18 + (y - WALL_HEIGHT) / 18) % 2 === 0) {
+              ctx.fillRect(x, y, 18, 18);
+            }
+          }
+        }
+        break;
+      case 'carpet':
+        for (let y = WALL_HEIGHT + 3; y < h; y += 6) {
+          for (let x = SIDE_WALL + ((y / 6) % 2) * 3; x < w; x += 6) {
+            ctx.fillRect(x, y, 1, 1);
+          }
+        }
+        break;
+      case 'concrete':
+        ctx.beginPath();
+        ctx.moveTo(60, WALL_HEIGHT);
+        ctx.lineTo(82, 110);
+        ctx.lineTo(70, 160);
+        ctx.moveTo(240, 90);
+        ctx.lineTo(205, 130);
+        ctx.lineTo(214, 200);
+        ctx.stroke();
+        for (let i = 0; i < 40; i++) {
+          ctx.fillRect(SIDE_WALL + ((i * 67) % 280), WALL_HEIGHT + ((i * 41) % 144), 2, 1);
+        }
+        break;
     }
-
-    // Alternating vertical wood joints
-    for (let x = sideWallWidth; x <= w - sideWallWidth; x += 28) {
-      ctx.beginPath();
-      ctx.moveTo(x, floorY);
-      ctx.lineTo(x, h);
-      ctx.stroke();
-    }
-
-    // Ambient Room Lighting Cone from ceiling
-    const lampGlow = ctx.createRadialGradient(w / 2, floorY + 40, 10, w / 2, floorY + 60, 150);
-    lampGlow.addColorStop(0, 'rgba(254, 240, 138, 0.12)');
-    lampGlow.addColorStop(1, 'rgba(0, 0, 0, 0.25)');
-    ctx.fillStyle = lampGlow;
-    ctx.fillRect(sideWallWidth, floorY, w - sideWallWidth * 2, floorH);
-
-    ctx.restore();
   }
 
-  /**
-   * Renders detailed 3D doors with frames, brass knobs, and trap indicators.
-   */
-  private static renderDoor(
-    ctx: CanvasRenderingContext2D,
-    door: DoorData,
-    isAirportExit: boolean,
-    animationTick: number
-  ): void {
-    const { x, y, direction, armedTrap } = door;
+  private static renderWindow(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(x - 2, y - 2, 40, 28);
+    ctx.fillStyle = '#0f1b3d';
+    ctx.fillRect(x, y, 36, 24);
+    ctx.fillStyle = '#fef9c3';
+    ctx.beginPath();
+    ctx.arc(x + 26, y + 8, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0f1b3d';
+    ctx.beginPath();
+    ctx.arc(x + 28, y + 7, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(x + 17, y, 2, 24);
+    ctx.fillRect(x, y + 11, 36, 2);
+  }
 
-    ctx.save();
-
-    if (isAirportExit) {
-      this.renderAirportExitDoor(ctx, x, y, animationTick);
-      ctx.restore();
+  private static renderDoor(ctx: CanvasRenderingContext2D, door: DoorData, tick: number): void {
+    if (door.targetRoomId === OUTSIDE) {
+      this.renderGardenGate(ctx, door, tick);
       return;
     }
 
-    const hasAcid = armedTrap?.type === TrapType.ACID_BUCKET;
-    const hasElectro = armedTrap?.type === TrapType.ELECTROCUTION;
+    const paint = '#a16207';
+    const frame = '#fef3c7';
+    const { x, y } = door;
 
-    switch (direction) {
+    switch (door.direction) {
       case 'NORTH': {
-        // Door in Back Wall (Centered at x: 160, y: 52)
-        const dw = 34;
-        const dh = 38;
+        const dw = 32;
+        const dh = 44;
         const dx = x - dw / 2;
-        const dy = y - dh + 6;
-
-        // Recessed Wall Shadow
-        ctx.fillStyle = '#0a0a0a';
-        ctx.fillRect(dx - 3, dy - 3, dw + 6, dh + 3);
-
-        // Mahogany Door Frame
-        ctx.fillStyle = '#451a03';
+        const dy = WALL_HEIGHT - dh;
+        ctx.fillStyle = frame;
         ctx.fillRect(dx - 2, dy - 2, dw + 4, dh + 2);
-
-        // Wood Door Body
-        const doorGrad = ctx.createLinearGradient(dx, dy, dx + dw, dy);
-        doorGrad.addColorStop(0, '#78350f');
-        doorGrad.addColorStop(0.5, '#92400e');
-        doorGrad.addColorStop(1, '#5e2405');
-        ctx.fillStyle = doorGrad;
+        ctx.fillStyle = paint;
         ctx.fillRect(dx, dy, dw, dh);
-
-        // Inset Panels
-        ctx.strokeStyle = '#451a03';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(dx + 4, dy + 4, dw / 2 - 6, dh / 2 - 6);
-        ctx.strokeRect(dx + dw / 2 + 2, dy + 4, dw / 2 - 6, dh / 2 - 6);
-        ctx.strokeRect(dx + 4, dy + dh / 2 + 2, dw / 2 - 6, dh / 2 - 6);
-        ctx.strokeRect(dx + dw / 2 + 2, dy + dh / 2 + 2, dw / 2 - 6, dh / 2 - 6);
-
-        // Brass Doorknob
-        ctx.fillStyle = '#fbbf24';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+        ctx.fillRect(dx + 5, dy + 5, dw - 10, 12);
+        ctx.fillRect(dx + 5, dy + 22, dw - 10, 16);
+        ctx.fillStyle = '#fde68a';
         ctx.beginPath();
-        ctx.arc(dx + dw - 6, dy + dh / 2 + 2, 2.5, 0, Math.PI * 2);
+        ctx.arc(dx + dw - 5, dy + 22, 1.8, 0, Math.PI * 2);
         ctx.fill();
-
-        // Trap: Acid Bucket above Door Frame
-        if (hasAcid) {
-          this.renderAcidBucket(ctx, x, dy - 8, animationTick);
-        }
-        // Trap: Electrocution Sparks on Handle
-        if (hasElectro) {
-          this.renderElectroSparks(ctx, dx + dw - 6, dy + dh / 2 + 2, animationTick);
-        }
         break;
       }
-
       case 'SOUTH': {
-        // Doorway Threshold in Foreground (x: 160, y: 188)
-        const dw = 40;
-        const dh = 10;
-        ctx.fillStyle = '#0a0a0a';
-        ctx.fillRect(x - dw / 2 - 2, y - 4, dw + 4, dh);
-        // Brass Carpet Trim / Door Sill
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(x - dw / 2, y - 2, dw, 5);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(x - dw / 2 + 2, y - 1, dw - 4, 2);
-
-        if (hasAcid) this.renderAcidBucket(ctx, x, y - 16, animationTick);
-        if (hasElectro) this.renderElectroSparks(ctx, x, y, animationTick);
+        // Doormat in the foreground, since the near wall is not drawn
+        ctx.fillStyle = '#44403c';
+        ctx.fillRect(x - 24, y - 2, 48, 11);
+        ctx.fillStyle = '#a8a29e';
+        ctx.fillRect(x - 21, y, 42, 7);
+        ctx.fillStyle = '#44403c';
+        for (let i = -18; i <= 18; i += 6) {
+          ctx.fillRect(x + i, y + 1, 2, 5);
+        }
         break;
       }
-
-      case 'WEST': {
-        // Door in Left Wall (x: 22, y: 120)
-        const dw = 14;
-        const dh = 40;
-        const dx = x - dw / 2;
-        const dy = y - dh / 2;
-
-        // Door frame angled in perspective
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(dx - 2, dy - 2, dw + 2, dh + 4);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(dx, dy, dw, dh);
-
-        // Perspective door panels
-        ctx.strokeStyle = '#270e02';
-        ctx.strokeRect(dx + 2, dy + 4, dw - 4, dh / 2 - 6);
-        ctx.strokeRect(dx + 2, dy + dh / 2 + 2, dw - 4, dh / 2 - 6);
-
-        // Brass Handle
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(dx + dw - 4, dy + dh / 2 - 2, 3, 5);
-
-        if (hasAcid) this.renderAcidBucket(ctx, x, dy - 8, animationTick);
-        if (hasElectro) this.renderElectroSparks(ctx, dx + dw - 3, dy + dh / 2, animationTick);
-        break;
-      }
-
+      case 'WEST':
       case 'EAST': {
-        // Door in Right Wall (x: 298, y: 120)
-        const dw = 14;
-        const dh = 40;
-        const dx = x - dw / 2;
-        const dy = y - dh / 2;
-
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(dx, dy - 2, dw + 2, dh + 4);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(dx, dy, dw, dh);
-
-        ctx.strokeStyle = '#270e02';
-        ctx.strokeRect(dx + 2, dy + 4, dw - 4, dh / 2 - 6);
-        ctx.strokeRect(dx + 2, dy + dh / 2 + 2, dw - 4, dh / 2 - 6);
-
-        // Brass Handle
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(dx + 1, dy + dh / 2 - 2, 3, 5);
-
-        if (hasAcid) this.renderAcidBucket(ctx, x, dy - 8, animationTick);
-        if (hasElectro) this.renderElectroSparks(ctx, dx + 2, dy + dh / 2, animationTick);
+        const isWest = door.direction === 'WEST';
+        const edge = isWest ? 4 : 302;
+        ctx.fillStyle = frame;
+        ctx.fillRect(edge - 1, y - 24, 16, 48);
+        ctx.fillStyle = paint;
+        ctx.fillRect(edge, y - 22, 14, 44);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+        ctx.fillRect(edge + 3, y - 18, 8, 14);
+        ctx.fillRect(edge + 3, y, 8, 16);
+        ctx.fillStyle = '#fde68a';
+        ctx.fillRect(isWest ? edge + 11 : edge + 1, y - 2, 2, 4);
         break;
       }
     }
-
-    ctx.restore();
   }
 
-  /**
-   * Renders the Airport Runway Exit Door with neon sign, glass window, and waiting airplane!
-   */
-  private static renderAirportExitDoor(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    animationTick: number
-  ): void {
-    const dw = 18;
-    const dh = 46;
-    const dx = x - dw / 2;
-    const dy = y - dh / 2;
+  private static renderGardenGate(ctx: CanvasRenderingContext2D, door: DoorData, tick: number): void {
+    const { y } = door;
+    const edge = 300;
 
-    // Glowing Exit Arch
-    ctx.fillStyle = '#065f46';
-    ctx.fillRect(dx - 4, dy - 4, dw + 6, dh + 8);
-    ctx.strokeStyle = '#34d399';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(dx - 4, dy - 4, dw + 6, dh + 8);
+    // Picket gate, with night garden visible between the slats
+    ctx.fillStyle = '#0f2a1d';
+    ctx.fillRect(edge, y - 28, 20, 56);
+    ctx.fillStyle = '#16a34a';
+    ctx.fillRect(edge + 3, y + 18, 15, 10);
 
-    // Glass Window looking out to Runway tarmac at night
-    const glassGrad = ctx.createLinearGradient(dx, dy, dx + dw, dy);
-    glassGrad.addColorStop(0, '#020617');
-    glassGrad.addColorStop(1, '#0f172a');
-    ctx.fillStyle = glassGrad;
-    ctx.fillRect(dx, dy, dw, dh);
+    ctx.fillStyle = '#f0fdf4';
+    for (let i = 0; i < 4; i++) {
+      ctx.fillRect(edge + 1 + i * 5, y - 26, 3, 52);
+    }
+    ctx.fillRect(edge, y - 16, 20, 3);
+    ctx.fillRect(edge, y + 12, 20, 3);
 
-    // Blinking Runway beacon light (outside through window)
-    const blink = Math.sin(animationTick * 0.15) > 0;
-    ctx.fillStyle = blink ? '#ef4444' : '#7f1d1d';
-    ctx.beginPath();
-    ctx.arc(dx + 8, dy + 14, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Propeller airplane silhouette in distance
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillRect(dx + 4, dy + 18, 10, 3); // wings
-    ctx.fillRect(dx + 7, dy + 14, 3, 10); // fuselage
-
-    // Glowing Neon "GATE 1 / AIRPORT" overhead plaque
-    ctx.fillStyle = '#022c22';
-    ctx.fillRect(dx - 22, dy - 18, 38, 12);
-    ctx.strokeStyle = '#10b981';
-    ctx.strokeRect(dx - 22, dy - 18, 38, 12);
-    ctx.fillStyle = '#6ee7b7';
-    ctx.font = 'bold 8px monospace';
-    ctx.fillText('EXIT ✈', dx - 20, dy - 9);
+    // Pulsing sign, on the floor side so it is never clipped
+    const glow = 0.65 + Math.sin(tick * 0.08) * 0.35;
+    ctx.fillStyle = `rgba(74, 222, 128, ${glow})`;
+    ctx.fillRect(edge - 28, y - 44, 44, 13);
+    ctx.fillStyle = '#052e16';
+    ctx.font = 'bold 8px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('GARDEN', edge - 6, y - 34.5);
+    ctx.textAlign = 'left';
   }
 
-  private static renderAcidBucket(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    tick: number
-  ): void {
-    // Metal Pail
-    ctx.fillStyle = '#94a3b8';
-    ctx.beginPath();
-    ctx.moveTo(x - 5, y);
-    ctx.lineTo(x + 5, y);
-    ctx.lineTo(x + 4, y + 7);
-    ctx.lineTo(x - 4, y + 7);
-    ctx.closePath();
-    ctx.fill();
+  /** Door traps, drawn only for their planter. */
+  private static renderDoorTrap(ctx: CanvasRenderingContext2D, door: DoorData, trap: ArmedTrap, tick: number): void {
+    const x = door.direction === 'WEST' ? door.x + 14 : door.direction === 'EAST' ? door.x - 14 : door.x;
+    const y = door.direction === 'NORTH' ? door.y + 10 : door.direction === 'SOUTH' ? door.y - 10 : door.y + 8;
 
-    // Toxic green liquid rim
-    ctx.fillStyle = '#22c55e';
-    ctx.fillRect(x - 4, y, 8, 2);
-
-    // Acid Drip
-    const dripY = (tick % 30) / 4;
-    ctx.beginPath();
-    ctx.arc(x, y + 8 + dripY, 1.2, 0, Math.PI * 2);
-    ctx.fill();
+    if (trap.type === TrapType.MARBLE_SPILL) {
+      const colors = ['#f43f5e', '#38bdf8', '#facc15', '#a78bfa', '#4ade80'];
+      colors.forEach((color, i) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x - 8 + i * 4, y + (i % 2) * 3, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else {
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(x - 10, y - 3, 20, 7);
+      if (tick % 12 < 7) {
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x - 7, y - 4);
+        ctx.lineTo(x - 2, y);
+        ctx.lineTo(x + 1, y - 4);
+        ctx.lineTo(x + 7, y + 1);
+        ctx.stroke();
+      }
+    }
   }
 
-  private static renderElectroSparks(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    tick: number
-  ): void {
-    if (tick % 6 > 2) return; // Flickering spark effect
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(x - 3, y - 3);
-    ctx.lineTo(x + 2, y - 1);
-    ctx.lineTo(x - 1, y + 2);
-    ctx.lineTo(x + 3, y + 4);
-    ctx.stroke();
-  }
-
-  /**
-   * Renders detailed 2.5D furniture with drop shadows, material highlights, and search states.
-   */
-  private static renderFurniture(
+  private static renderOwnTrapMarker(
     ctx: CanvasRenderingContext2D,
     furn: FurnitureData,
+    planter: RaiderId,
     tick: number
   ): void {
+    const pulse = (Math.sin(tick * 0.2) + 1) * 0.5;
+    ctx.globalAlpha = 0.5 + pulse * 0.5;
+    ctx.fillStyle = RAIDER_PALETTES[planter].bandana;
+    ctx.beginPath();
+    ctx.arc(furn.x + furn.width - 2, furn.y + 2, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  private static renderFurniture(ctx: CanvasRenderingContext2D, furn: FurnitureData): void {
     const { x, y, width: w, height: h, type, searched } = furn;
 
     ctx.save();
 
-    // 1. Drop Shadow under furniture
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
     ctx.beginPath();
-    ctx.ellipse(x + w / 2, y + h + 2, w / 2 + 3, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + w / 2, y + h + 1, w / 2 + 2, 3, 0, 0, Math.PI * 2);
     ctx.fill();
 
     switch (type) {
-      case FurnitureType.SAFE: {
-        // --- Heavy Steel Wall/Floor Safe ---
-        // Beveled Steel Box
-        const safeGrad = ctx.createLinearGradient(x, y, x + w, y + h);
-        safeGrad.addColorStop(0, '#64748b');
-        safeGrad.addColorStop(0.5, '#475569');
-        safeGrad.addColorStop(1, '#334155');
-        ctx.fillStyle = safeGrad;
-        ctx.fillRect(x, y, w, h);
-
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(x, y, w, h);
-
-        // Corner Rivet Bolts
-        ctx.fillStyle = '#cbd5e1';
-        [
-          [x + 3, y + 3],
-          [x + w - 4, y + 3],
-          [x + 3, y + h - 4],
-          [x + w - 4, y + h - 4]
-        ].forEach(([rx, ry]) => {
-          ctx.beginPath();
-          ctx.arc(rx, ry, 1, 0, Math.PI * 2);
-          ctx.fill();
-        });
-
+      case FurnitureType.FRIDGE:
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(x + 3, y - 4, w - 6, h + 4);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(x + 3, y + 7, w - 6, 1.5);
         if (searched) {
-          // Open Safe Door (swung left showing dark interior)
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
-          // Swung Door
-          ctx.fillStyle = '#475569';
-          ctx.fillRect(x - 8, y + 2, 8, h - 4);
-          ctx.strokeStyle = '#94a3b8';
-          ctx.strokeRect(x - 8, y + 2, 8, h - 4);
+          // Door swung open on a lit, empty interior
+          ctx.fillStyle = '#fef9c3';
+          ctx.fillRect(x + 5, y - 2, w - 10, 8);
+          ctx.fillRect(x + 5, y + 10, w - 10, h - 12);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(x + w - 3, y - 4, 6, h + 4);
         } else {
-          // Chrome Combination Dial Wheel
-          const cx = x + w / 2;
-          const cy = y + h / 2;
-          ctx.fillStyle = '#e2e8f0';
-          ctx.beginPath();
-          ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = '#1e293b';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-
-          // Dial Knob Center
-          ctx.fillStyle = '#0f172a';
-          ctx.beginPath();
-          ctx.arc(cx, cy, 2, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Heavy Turn Handle
-          ctx.strokeStyle = '#cbd5e1';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(cx + 6, cy - 2);
-          ctx.lineTo(cx + 6, cy + 4);
-          ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(x + w - 8, y, 2, 5);
+          ctx.fillRect(x + w - 8, y + 11, 2, 9);
         }
         break;
-      }
 
-      case FurnitureType.PAINTING: {
-        // --- Ornate Baroque Wall Painting ---
-        ctx.save();
-        if (searched) {
-          // Crooked tilted angle when searched!
-          ctx.translate(x + w / 2, y + h / 2);
-          ctx.rotate(0.12);
-          ctx.translate(-(x + w / 2), -(y + h / 2));
-        }
-
-        // Gilded Gold Frame
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-
-        // Canvas Area
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
-
-        // Spy Parody Portrait (Alfred E. Neuman / Spy caricature)
-        const px = x + w / 2;
-        const py = y + h / 2;
-        ctx.fillStyle = '#fde047'; // Portrait background
-        ctx.fillRect(x + 5, y + 5, w - 10, h - 10);
-
-        // Iconic Spy Profile Silhouette in Painting
-        ctx.fillStyle = '#000000';
-        ctx.beginPath();
-        ctx.arc(px, py - 1, 4, 0, Math.PI * 2); // head
-        ctx.moveTo(px, py);
-        ctx.lineTo(px + 6, py + 1); // beak
-        ctx.lineTo(px, py + 2);
-        ctx.closePath();
-        ctx.fill();
-        // Fedora in painting
-        ctx.fillRect(px - 5, py - 5, 10, 2);
-        ctx.fillRect(px - 3, py - 8, 6, 3);
-
-        ctx.restore();
-        break;
-      }
-
-      case FurnitureType.DESK: {
-        // --- Executive Mahogany Desk with Brass Lamp ---
-        // Desk Top
-        const deskGrad = ctx.createLinearGradient(x, y, x + w, y);
-        deskGrad.addColorStop(0, '#9a3412');
-        deskGrad.addColorStop(0.5, '#c2410c');
-        deskGrad.addColorStop(1, '#7c2d12');
-        ctx.fillStyle = deskGrad;
-        ctx.fillRect(x, y, w, 8);
-
-        // Desk Pedestals (Left & Right legs)
-        ctx.fillStyle = '#7c2d12';
-        ctx.fillRect(x + 2, y + 8, 10, h - 8);
-        ctx.fillRect(x + w - 12, y + 8, 10, h - 8);
-
-        // Drawers with Brass Handles
-        ctx.fillStyle = '#431407';
-        ctx.fillRect(x + 3, y + 10, 8, 5);
-        ctx.fillRect(x + 3, y + 17, 8, 5);
-        ctx.fillRect(x + w - 11, y + 10, 8, 5);
-        ctx.fillRect(x + w - 11, y + 17, 8, 5);
-
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(x + 6, y + 12, 2, 1);
-        ctx.fillRect(x + 6, y + 19, 2, 1);
-        ctx.fillRect(x + w - 8, y + 12, 2, 1);
-        ctx.fillRect(x + w - 8, y + 19, 2, 1);
-
-        if (searched) {
-          // Pulled out drawer
-          ctx.fillStyle = '#ea580c';
-          ctx.fillRect(x + w - 14, y + 12, 12, 6);
-        }
-
-        // Green Banker's Lamp on top
-        ctx.fillStyle = '#15803d';
-        ctx.fillRect(x + 4, y - 6, 7, 3);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(x + 7, y - 3, 1, 3);
-
-        // Telephone on desk
-        ctx.fillStyle = '#18181b';
-        ctx.fillRect(x + w - 10, y - 3, 6, 4);
-        break;
-      }
-
-      case FurnitureType.COAT_RACK: {
-        // --- Victorian Turned Wood Coat Rack ---
-        // Pole
+      case FurnitureType.CUPBOARD:
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(x, y, w, h - 4);
         ctx.fillStyle = '#78350f';
-        ctx.fillRect(x + w / 2 - 2, y, 4, h);
+        ctx.fillRect(x, y + h - 6, w, 2);
+        if (searched) {
+          ctx.fillStyle = '#1c1917';
+          ctx.fillRect(x + 2, y + 2, w - 4, h - 10);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(x + 2, y + (h - 10) / 2, w - 4, 1.5);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(x - 5, y + 1, 5, h - 7);
+          ctx.fillRect(x + w, y + 1, 5, h - 7);
+        } else {
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(x + 2, y + 2, w / 2 - 3, h - 10);
+          ctx.fillRect(x + w / 2 + 1, y + 2, w / 2 - 3, h - 10);
+          ctx.fillStyle = '#fde68a';
+          ctx.fillRect(x + w / 2 - 3, y + h / 2 - 4, 1.5, 4);
+          ctx.fillRect(x + w / 2 + 2, y + h / 2 - 4, 1.5, 4);
+        }
+        break;
 
-        // Base 4-legged stand
-        ctx.fillStyle = '#451a03';
-        ctx.beginPath();
-        ctx.moveTo(x, y + h);
-        ctx.lineTo(x + w / 2, y + h - 6);
-        ctx.lineTo(x + w, y + h);
-        ctx.stroke();
+      case FurnitureType.TABLE:
+        // Tablecloth hides whatever is underneath until it is pulled aside
+        ctx.fillStyle = '#7c2d12';
+        ctx.fillRect(x + 3, y + 9, 4, h - 9);
+        ctx.fillRect(x + w - 7, y + 9, 4, h - 9);
+        ctx.fillStyle = '#fafaf9';
+        ctx.fillRect(x, y, w, searched ? 7 : 15);
+        ctx.fillStyle = '#dc2626';
+        for (let i = 0; i < w; i += 8) {
+          ctx.fillRect(x + i, y, 4, 4);
+          ctx.fillRect(x + i + 4, y + 4, 4, 3);
+        }
+        if (searched) {
+          ctx.fillStyle = '#fafaf9';
+          ctx.beginPath();
+          ctx.moveTo(x + w - 10, y + 7);
+          ctx.lineTo(x + w + 3, y + 7);
+          ctx.lineTo(x + w + 1, y + 22);
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
 
-        // Curved Brass Hooks at Top
-        ctx.fillStyle = '#f59e0b';
+      case FurnitureType.BIN:
+        ctx.fillStyle = '#475569';
         ctx.beginPath();
-        ctx.arc(x + w / 2 - 5, y + 4, 3, Math.PI, Math.PI * 2);
-        ctx.arc(x + w / 2 + 5, y + 4, 3, Math.PI, Math.PI * 2);
-        ctx.stroke();
-
-        // Hanging Trenchcoat
-        ctx.fillStyle = '#334155';
-        ctx.beginPath();
-        ctx.moveTo(x + w / 2 - 1, y + 7);
-        ctx.lineTo(x + w / 2 - 7, y + 18);
-        ctx.lineTo(x + w / 2 + 2, y + 19);
+        ctx.moveTo(x + 3, y + 6);
+        ctx.lineTo(x + w - 3, y + 6);
+        ctx.lineTo(x + w - 6, y + h);
+        ctx.lineTo(x + 6, y + h);
         ctx.closePath();
         ctx.fill();
-
-        // Top Fedora
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(x + w / 2 - 6, y - 4, 12, 2);
-        ctx.fillRect(x + w / 2 - 4, y - 8, 8, 4);
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+        for (let i = 9; i < w - 8; i += 6) {
+          ctx.beginPath();
+          ctx.moveTo(x + i, y + 8);
+          ctx.lineTo(x + i, y + h - 2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#64748b';
+        if (searched) {
+          // Lid knocked to the floor, rubbish on show
+          ctx.fillStyle = '#a3a380';
+          ctx.fillRect(x + 6, y + 3, 7, 4);
+          ctx.fillRect(x + w - 15, y + 2, 9, 4);
+          ctx.fillStyle = '#64748b';
+          ctx.beginPath();
+          ctx.ellipse(x - 3, y + h - 1, 8, 2.5, 0.2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.ellipse(x + w / 2, y + 5, w / 2 - 1, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillRect(x + w / 2 - 3, y - 1, 6, 2);
+        }
         break;
-      }
 
-      default:
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(x, y, w, h);
+      case FurnitureType.HAMPER:
+        ctx.fillStyle = '#d4a373';
+        ctx.fillRect(x + 3, y + 8, w - 6, h - 8);
+        ctx.strokeStyle = '#a47148';
+        ctx.lineWidth = 1;
+        for (let row = y + 12; row < y + h; row += 5) {
+          ctx.beginPath();
+          ctx.moveTo(x + 3, row);
+          ctx.lineTo(x + w - 3, row);
+          ctx.stroke();
+        }
+        if (searched) {
+          // Laundry pulled out over the side
+          ctx.fillStyle = '#93c5fd';
+          ctx.fillRect(x + 5, y + 4, 9, 6);
+          ctx.fillStyle = '#fda4af';
+          ctx.fillRect(x + 14, y + 3, 10, 7);
+          ctx.fillStyle = '#93c5fd';
+          ctx.fillRect(x + w - 4, y + 12, 7, 12);
+        } else {
+          ctx.fillStyle = '#b08968';
+          ctx.fillRect(x + 1, y + 5, w - 2, 4);
+        }
         break;
-    }
-
-    // Trapped subtle hint: tiny red booby-trap indicator if armed
-    if (furn.armedTrap) {
-      const pulse = (Math.sin(tick * 0.2) + 1) * 0.5;
-      ctx.fillStyle = `rgba(239, 68, 68, ${0.4 + pulse * 0.4})`;
-      ctx.beginPath();
-      ctx.arc(x + w - 2, y + 2, 2, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     ctx.restore();
   }
 
-  /**
-   * Renders dropped secret items with glowing pedestals.
-   */
-  private static renderGroundItem(
-    ctx: CanvasRenderingContext2D,
-    item: SecretItemType,
-    x: number,
-    y: number,
-    tick: number
-  ): void {
+  private static renderFloorLoot(ctx: CanvasRenderingContext2D, item: LootType, x: number, y: number, tick: number): void {
     ctx.save();
 
-    // Floating bob motion
-    const bobY = Math.sin(tick * 0.1) * 2;
-    const itemY = y + bobY;
-
-    // Glowing Halo Pedestal
     const pulse = (Math.sin(tick * 0.15) + 1) * 0.5;
-    ctx.fillStyle = `rgba(250, 204, 21, ${0.25 + pulse * 0.25})`;
+    ctx.fillStyle = `rgba(254, 240, 138, ${0.25 + pulse * 0.25})`;
     ctx.beginPath();
-    ctx.ellipse(x, y + 5, 9 + pulse * 2, 4 + pulse, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y + 6, 9 + pulse * 2, 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    switch (item) {
-      case SecretItemType.BRIEFCASE:
-        // Mini Leather Briefcase
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(x - 6, itemY - 4, 12, 8);
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(x - 2, itemY - 6, 4, 2); // handle
-        ctx.fillRect(x - 4, itemY - 1, 2, 2); // brass clasps
-        ctx.fillRect(x + 2, itemY - 1, 2, 2);
-        break;
-
-      case SecretItemType.PASSPORT:
-        // Navy Passport
-        ctx.fillStyle = '#1e3a8a';
-        ctx.fillRect(x - 4, itemY - 5, 8, 10);
-        ctx.fillStyle = '#facc15';
-        ctx.fillRect(x - 2, itemY - 2, 4, 4); // gold crest
-        break;
-
-      case SecretItemType.SECRET_PLANS:
-        // Rolled Blueprint
-        ctx.fillStyle = '#0284c7';
-        ctx.fillRect(x - 6, itemY - 3, 12, 6);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(x - 1, itemY - 3, 2, 6); // red ribbon
-        break;
-
-      case SecretItemType.MONEY:
-        // Cash Stack
-        ctx.fillStyle = '#15803d';
-        ctx.fillRect(x - 5, itemY - 3, 10, 6);
-        ctx.fillStyle = '#bbf7d0';
-        ctx.fillRect(x - 2, itemY - 1, 4, 2); // currency band
-        break;
-
-      case SecretItemType.KEY:
-        // Brass Skeleton Key
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(x - 3, itemY, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillRect(x, itemY - 1, 6, 2);
-        ctx.fillRect(x + 4, itemY + 1, 2, 2);
-        break;
-    }
+    ctx.translate(x, y + Math.sin(tick * 0.1) * 1.5);
+    this.drawLootIcon(ctx, item);
 
     ctx.restore();
+  }
+
+  private static drawLootIcon(ctx: CanvasRenderingContext2D, item: LootType): void {
+    switch (item) {
+      case LootType.BASKET:
+        ctx.strokeStyle = '#92400e';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, -1, 5, Math.PI, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(-7, -1, 14, 7);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-7, -1, 14, 2);
+        break;
+      case LootType.PIZZA:
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath();
+        ctx.moveTo(-6, -4);
+        ctx.lineTo(6, -4);
+        ctx.lineTo(0, 7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(-7, -6, 14, 2.5);
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(-1.5, -1, 1.3, 0, Math.PI * 2);
+        ctx.arc(2, 1, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case LootType.CHEESE:
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.moveTo(-7, 5);
+        ctx.lineTo(7, 5);
+        ctx.lineTo(7, -2);
+        ctx.lineTo(-7, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ca8a04';
+        ctx.beginPath();
+        ctx.arc(-2, 2.5, 1.3, 0, Math.PI * 2);
+        ctx.arc(3, 1.5, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case LootType.HONEY:
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(-5, -3, 10, 9);
+        ctx.fillStyle = '#fffbeb';
+        ctx.fillRect(-5, -6, 10, 3);
+        ctx.fillStyle = '#fffbeb';
+        ctx.fillRect(-3, 0, 6, 3);
+        break;
+      case LootType.FISH:
+        ctx.fillStyle = '#7dd3fc';
+        ctx.beginPath();
+        ctx.ellipse(-1, 0, 6, 3.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(4, 0);
+        ctx.lineTo(8, -3.5);
+        ctx.lineTo(8, 3.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#0c4a6e';
+        ctx.beginPath();
+        ctx.arc(-4, -0.8, 0.9, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+    }
   }
 }

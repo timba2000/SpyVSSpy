@@ -1,14 +1,19 @@
 /**
- * Embassy Room & Furniture domain models.
+ * Room & Furniture domain models.
  */
 
-import { Direction, FurnitureType, SecretItemType, TrapType, SpyColor } from '../types';
+import { Direction, FurnitureType, LootType, TrapType, RaiderId } from '../types';
 
 export interface RoomBounds {
   minX: number;
   maxX: number;
   minY: number;
   maxY: number;
+}
+
+export interface ArmedTrap {
+  type: TrapType;
+  plantedBy: RaiderId;
 }
 
 export interface FurnitureData {
@@ -18,12 +23,9 @@ export interface FurnitureData {
   y: number;
   width: number;
   height: number;
-  heldItem?: SecretItemType;
+  heldItem?: LootType;
   searched: boolean;
-  armedTrap?: {
-    type: TrapType;
-    plantedBy: SpyColor;
-  };
+  armedTrap?: ArmedTrap;
 }
 
 export interface DoorData {
@@ -35,15 +37,12 @@ export interface DoorData {
   y: number;
   width: number;
   height: number;
-  armedTrap?: {
-    type: TrapType.ACID_BUCKET | TrapType.ELECTROCUTION;
-    plantedBy: SpyColor;
-  };
+  armedTrap?: ArmedTrap;
 }
 
 export interface GroundItem {
   id: string;
-  item: SecretItemType;
+  item: LootType;
   x: number;
   y: number;
 }
@@ -51,11 +50,12 @@ export interface GroundItem {
 export class RoomInstance {
   public readonly id: string;
   public readonly name: string;
-  public readonly isAirportExit: boolean;
+  public readonly isExitRoom: boolean;
   public readonly bounds: RoomBounds;
   public doors: DoorData[];
   public furniture: FurnitureData[];
   public groundItems: GroundItem[] = [];
+  private nextGroundItemId: number = 1;
 
   constructor(
     id: string,
@@ -64,12 +64,12 @@ export class RoomInstance {
       bounds?: RoomBounds;
       doors?: DoorData[];
       furniture?: FurnitureData[];
-      isAirportExit?: boolean;
+      isExitRoom?: boolean;
     } = {}
   ) {
     this.id = id;
     this.name = name;
-    this.isAirportExit = options.isAirportExit ?? false;
+    this.isExitRoom = options.isExitRoom ?? false;
     this.bounds = options.bounds ?? { minX: 20, maxX: 300, minY: 50, maxY: 190 };
     this.doors = options.doors ?? [];
     this.furniture = options.furniture ?? [];
@@ -79,14 +79,26 @@ export class RoomInstance {
     return this.doors.find((d) => d.direction === direction);
   }
 
+  /**
+   * Returns the closest piece of furniture within reach, so a raider standing
+   * between two pieces always interacts with the one they are next to.
+   */
   public getFurnitureAt(x: number, y: number, reachDistance: number = 25): FurnitureData | undefined {
-    return this.furniture.find((f) => {
-      const centerX = f.x + f.width / 2;
-      const centerY = f.y + f.height / 2;
-      const dx = Math.abs(x - centerX);
-      const dy = Math.abs(y - centerY);
-      return dx <= f.width / 2 + reachDistance && dy <= f.height / 2 + reachDistance;
-    });
+    let nearest: FurnitureData | undefined;
+    let nearestDistance = Infinity;
+
+    for (const f of this.furniture) {
+      const dx = Math.abs(x - (f.x + f.width / 2));
+      const dy = Math.abs(y - (f.y + f.height / 2));
+      if (dx > f.width / 2 + reachDistance || dy > f.height / 2 + reachDistance) continue;
+
+      const distance = Math.hypot(dx, dy);
+      if (distance < nearestDistance) {
+        nearest = f;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
   }
 
   public getDoorNear(x: number, y: number, reachDistance: number = 20): DoorData | undefined {
@@ -104,9 +116,9 @@ export class RoomInstance {
     };
   }
 
-  public addGroundItem(item: SecretItemType, x: number, y: number): void {
-    const id = `ground_${item}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    this.groundItems.push({ id, item, x, y });
+  public addGroundItem(item: LootType, x: number, y: number): void {
+    const position = this.clampPosition(x, y);
+    this.groundItems.push({ id: `ground_${this.id}_${this.nextGroundItemId++}`, item, ...position });
   }
 
   public takeGroundItemAt(x: number, y: number, pickupRadius: number = 20): GroundItem | undefined {

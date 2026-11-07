@@ -1,8 +1,8 @@
 {
-  "name": "spy-vs-spy",
+  "name": "midnight-snackdown",
   "version": "0.1.0",
   "private": true,
-  "description": "A faithful modern recreation of the 1984 classic split-screen game Spy vs. Spy",
+  "description": "Two rival raccoons raid a sleeping house in a split-screen trap-and-swat race",
   "type": "module",
   "scripts": {
     "dev": "vite",
