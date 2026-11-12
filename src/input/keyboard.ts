@@ -11,7 +11,7 @@ const DIGIT_TRAPS: Record<string, TrapType> = {
   Digit2: TrapType.GLUE_PAD,
   Digit3: TrapType.PEPPER_POOF,
   Digit4: TrapType.MARBLE_SPILL,
-  Digit5: TrapType.STATIC_MAT
+  Digit5: TrapType.STATIC_MAT,
 };
 
 const DIGIT_TOOLS: Record<string, ToolType> = {
@@ -19,16 +19,26 @@ const DIGIT_TOOLS: Record<string, ToolType> = {
   Digit2: ToolType.COOKING_OIL,
   Digit3: ToolType.CLOTHES_PEG,
   Digit4: ToolType.BROOM,
-  Digit5: ToolType.RUBBER_BOOTS
+  Digit5: ToolType.RUBBER_BOOTS,
 };
 
-const MOVEMENT_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD']);
+const MOVEMENT_KEYS = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'KeyW',
+  'KeyA',
+  'KeyS',
+  'KeyD',
+]);
 const ACTION_KEYS = new Set(['Space', 'KeyE', 'KeyF', 'KeyQ']);
 
 export class KeyboardController {
   private engine: GameEngine;
   private raider: RaiderId;
   private keysPressed: Set<string> = new Set();
+  public enabled = true;
 
   constructor(engine: GameEngine, raider: RaiderId = 'RUSTY') {
     this.engine = engine;
@@ -36,8 +46,22 @@ export class KeyboardController {
     this.setupListeners();
   }
 
+  public setEngine(engine: GameEngine): void {
+    this.engine = engine;
+    this.keysPressed.clear();
+  }
+
+  public setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) {
+      this.keysPressed.clear();
+    }
+  }
+
   private setupListeners(): void {
     window.addEventListener('keydown', (e) => {
+      if (!this.enabled) return;
+
       // Stop the browser acting on game keys, e.g. Space pressing a focused button.
       if (MOVEMENT_KEYS.has(e.code) || ACTION_KEYS.has(e.code)) {
         e.preventDefault();
@@ -77,6 +101,8 @@ export class KeyboardController {
   }
 
   public update(): void {
+    if (!this.enabled) return;
+
     let dx = 0;
     let dy = 0;
 

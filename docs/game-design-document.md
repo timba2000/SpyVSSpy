@@ -70,7 +70,7 @@ Each raccoon starts with two of each trap, and always has all five tools, holdin
 ## 7. Knockouts, clocks and ending the match
 
 - **Knockout:** 5 seconds out of action. All loot scatters on the floor where they fell, 15 seconds come off that raccoon's own clock, and they wake at full health in their starting room.
-- **Clocks:** each raccoon has their own 180-second clock.
+- **Clocks:** each raccoon has their own 180-second clock (configurable in Options: 120s, 180s, or 300s).
 - **Clock reaches zero:** that raccoon falls asleep for the rest of the match. Their loot scatters on the floor, their traps stay armed, and the rival plays on alone.
 - **Win:** leave through the garden gate with the full feast, by walking through it or pressing the action key beside it.
 - **Refused:** without a full feast the gate stays shut and shows a message. There is no penalty.
@@ -99,7 +99,7 @@ Soot sees what a player can see on screen, including what has been searched and 
 | Simulation rate | 60 ticks per second |
 | Walk speed | 2.5 units per tick |
 | Search time | 60 ticks |
-| Clock per raccoon | 180 seconds |
+| Clock per raccoon | 180 seconds default (configurable: 120s, 180s, 300s) |
 | Knockout duration | 300 ticks |
 | Knockout clock penalty | 15 seconds |
 | Swat damage and range | 25 damage, 32 units |
@@ -110,6 +110,13 @@ Soot sees what a player can see on screen, including what has been searched and 
 | Search and pick-up reach | 25 units |
 | Trap-setting reach | 30 units |
 | Starting traps | 2 of each |
+
+## 9b. 3D Presentation, Instructions & Options
+
+- **3D Cutaway Diorama Renderer**: Rooms render in 3D perspective with cutaway wall caps, perspective-converging floor tiles/planks/flagstones, volumetric window moonbeams, 3D extruded furniture with open/searched states, and 3D spherical/cylindrical shaded raccoons.
+- **Instructions & Options Menu**: Accessible from the top-right toolbar or via keyboard shortcuts (`I`/`H` for Instructions, `O`/`Esc` for Options). Opening the menu pauses the simulation and raid clocks.
+  - **Instructions Tab**: Full control guide, house ring diagram, and trap-to-counter-tool table.
+  - **Options Tab**: Sound effects toggle and master volume slider, 3D graphics toggles (Volumetric Moonlight Rays, 3D Shadows & Reflections, 3D Perspective Extrusion Depth), Controls Hint bar visibility, Raid Clock duration selector (`2:00`, `3:00`, `5:00`), and a **Start New Raid** button.
 
 ## 10. Backlog
 

@@ -8,6 +8,8 @@
 
 export class GameAudio {
   private ctx?: AudioContext;
+  public muted = false;
+  public masterVolume = 0.85;
 
   /** Call from a user gesture (key press or click) to enable sound. */
   public unlock(): void {
@@ -23,12 +25,19 @@ export class GameAudio {
 
   private tone(
     frequency: number,
-    options: { type?: OscillatorType; duration?: number; volume?: number; delay?: number; slideTo?: number } = {}
+    options: {
+      type?: OscillatorType;
+      duration?: number;
+      volume?: number;
+      delay?: number;
+      slideTo?: number;
+    } = {}
   ): void {
     const ctx = this.ctx;
-    if (!ctx) return;
+    if (!ctx || this.muted || this.masterVolume <= 0) return;
 
     const { type = 'triangle', duration = 0.1, volume = 0.1, delay = 0, slideTo } = options;
+    const effectiveVolume = Math.max(0.001, volume * this.masterVolume);
     const start = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -36,7 +45,7 @@ export class GameAudio {
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, start);
     if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, start + duration);
-    gain.gain.setValueAtTime(volume, start);
+    gain.gain.setValueAtTime(effectiveVolume, start);
     gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
 
     osc.connect(gain);
@@ -48,7 +57,13 @@ export class GameAudio {
   /** Papery scrabbling while rummaging through furniture. */
   public playRummage(): void {
     [0, 0.07, 0.15].forEach((delay, i) => {
-      this.tone(300 + i * 90, { type: 'square', duration: 0.05, volume: 0.04, delay, slideTo: 180 });
+      this.tone(300 + i * 90, {
+        type: 'square',
+        duration: 0.05,
+        volume: 0.04,
+        delay,
+        slideTo: 180,
+      });
     });
   }
 

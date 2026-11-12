@@ -1,6 +1,6 @@
 /**
  * Split-Screen Renderer: a pane per raider, side by side, each showing that raider's
- * room over their status panel. Rooms are drawn at a uniform scale.
+ * 3D room diorama over their 3D tactile status panel. Rooms are drawn at a uniform scale.
  */
 
 import { GameEngine } from '../core/engine';
@@ -9,10 +9,11 @@ import { RoomRenderer } from './roomRenderer';
 import { RaiderRenderer, RAIDER_PALETTES } from './raiderRenderer';
 import { HudRenderer } from './hudRenderer';
 import { VisualEffects } from './visualEffects';
+import { drawSphere3D, roundedRectPath } from './render3d';
 
 const LOGICAL_W = 320;
 const LOGICAL_H = 200;
-const DIVIDER_W = 4;
+const DIVIDER_W = 6;
 
 export class SplitScreenRenderer {
   public static render(
@@ -21,17 +22,26 @@ export class SplitScreenRenderer {
     vfx: VisualEffects,
     width: number,
     height: number,
-    tick: number = 0
+    tick = 0
   ): void {
-    ctx.fillStyle = '#0c0a09';
+    ctx.fillStyle = '#040711';
     ctx.fillRect(0, 0, width, height);
 
     const paneW = (width - DIVIDER_W) / 2;
     this.renderPane(ctx, engine, vfx, 'RUSTY', 0, paneW, height, tick);
     this.renderPane(ctx, engine, vfx, 'SOOT', paneW + DIVIDER_W, paneW, height, tick);
 
+    // 3D Cylindrical Metallic Center Divider Pillar
+    const divGrad = ctx.createLinearGradient(paneW, 0, paneW + DIVIDER_W, 0);
+    divGrad.addColorStop(0, '#020617');
+    divGrad.addColorStop(0.35, '#64748b');
+    divGrad.addColorStop(0.55, '#94a3b8');
+    divGrad.addColorStop(1, '#020617');
+    ctx.fillStyle = divGrad;
+    ctx.fillRect(paneW, 0, DIVIDER_W, height);
+
     if (engine.isGameOver) {
-      this.renderGameOverOverlay(ctx, engine, width, height, tick);
+      this.renderGameOverOverlay3D(ctx, engine, width, height, tick);
     }
   }
 
@@ -73,30 +83,54 @@ export class SplitScreenRenderer {
 
     ctx.restore();
 
-    this.renderRoomLabel(ctx, room.name, RAIDER_PALETTES[viewer].bandana);
+    this.renderRoomLabel3D(ctx, room.name, RAIDER_PALETTES[viewer].bandana);
 
     ctx.restore();
 
     HudRenderer.render(ctx, raider, paneX, roomH, paneW, paneH - roomH, tick);
   }
 
-  private static renderRoomLabel(ctx: CanvasRenderingContext2D, roomName: string, accent: string): void {
+  private static renderRoomLabel3D(
+    ctx: CanvasRenderingContext2D,
+    roomName: string,
+    accent: string
+  ): void {
     ctx.save();
-    ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
-    const padding = 10;
-    const labelW = ctx.measureText(roomName).width + padding * 2;
+    ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
+    const padding = 14;
+    const labelW = ctx.measureText(roomName.toUpperCase()).width + padding * 2;
+    const x = 10;
+    const y = 8;
+    const h = 26;
 
-    ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
-    ctx.fillRect(0, 0, labelW, 26);
-    ctx.fillStyle = accent;
-    ctx.fillRect(0, 26, labelW, 2);
-    ctx.fillStyle = '#fafaf9';
+    // 3D Drop Shadow
+    roundedRectPath(ctx, x + 2, y + 3, labelW, h, 6);
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.72)';
+    ctx.fill();
+
+    // 3D Beveled Plaque Body
+    const bgGrad = ctx.createLinearGradient(x, y, x, y + h);
+    bgGrad.addColorStop(0, 'rgba(30, 41, 59, 0.92)');
+    bgGrad.addColorStop(1, 'rgba(15, 23, 42, 0.96)');
+    roundedRectPath(ctx, x, y, labelW, h, 6);
+    ctx.fillStyle = bgGrad;
+    ctx.fill();
+
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Brass rivets
+    drawSphere3D(ctx, x + 5, y + h / 2, 2, 2, '#facc15', { specular: true });
+    drawSphere3D(ctx, x + labelW - 5, y + h / 2, 2, 2, '#facc15', { specular: true });
+
+    ctx.fillStyle = '#f8fafc';
     ctx.textBaseline = 'middle';
-    ctx.fillText(roomName, padding, 14);
+    ctx.fillText(roomName.toUpperCase(), x + padding, y + h / 2 + 1);
     ctx.restore();
   }
 
-  private static renderGameOverOverlay(
+  private static renderGameOverOverlay3D(
     ctx: CanvasRenderingContext2D,
     engine: GameEngine,
     width: number,
@@ -104,7 +138,7 @@ export class SplitScreenRenderer {
     tick: number
   ): void {
     ctx.save();
-    ctx.fillStyle = 'rgba(12, 10, 9, 0.8)';
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.82)';
     ctx.fillRect(0, 0, width, height);
 
     ctx.textAlign = 'center';
@@ -113,36 +147,53 @@ export class SplitScreenRenderer {
     const accent = engine.winner ? RAIDER_PALETTES[engine.winner].bandana : '#94a3b8';
 
     if (engine.winner) {
-      // Falling crumbs
-      for (let i = 0; i < 40; i++) {
-        const px = (i * 83) % width;
-        const py = ((i * 47 + tick * (1 + (i % 3))) % (height + 20)) - 10;
-        ctx.fillStyle = i % 2 === 0 ? '#fde047' : '#fb923c';
-        ctx.fillRect(px, py, 5, 5);
+      // 3D Shaded Celebration Confetti Spheres
+      for (let i = 0; i < 36; i++) {
+        const px = (i * 89) % width;
+        const py = ((i * 53 + tick * (1.2 + (i % 3))) % (height + 24)) - 12;
+        const col = i % 3 === 0 ? '#fde047' : i % 3 === 1 ? '#fb923c' : '#38bdf8';
+        drawSphere3D(ctx, px, py, 4.5, 4.5, col, { specular: true });
       }
     }
 
-    ctx.fillStyle = '#1c1917';
-    ctx.fillRect(cx - 320, cy - 90, 640, 180);
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 4;
-    ctx.strokeRect(cx - 320, cy - 90, 640, 180);
+    // 3D Extruded Victory Card Shadow
+    roundedRectPath(ctx, cx - 326, cy - 92, 652, 196, 16);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fill();
 
-    ctx.fillStyle = '#fafaf9';
-    ctx.font = '900 44px "Trebuchet MS", "Arial Black", sans-serif';
-    ctx.fillText(engine.winner ? `${engine.winner} WINS THE FEAST!` : 'THE SUN IS UP!', cx, cy - 18);
+    // 3D Beveled Victory Card
+    const cardGrad = ctx.createLinearGradient(cx, cy - 98, cx, cy + 98);
+    cardGrad.addColorStop(0, '#1e293b');
+    cardGrad.addColorStop(1, '#090d16');
+    roundedRectPath(ctx, cx - 330, cy - 98, 660, 196, 16);
+    ctx.fillStyle = cardGrad;
+    ctx.fill();
+
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+
+    // 3D Extruded Title Text
+    const title = engine.winner ? `${engine.winner} WINS THE FEAST!` : 'THE SUN IS UP!';
+    ctx.font = '900 42px "Trebuchet MS", "Arial Black", sans-serif';
+    ctx.fillStyle = '#020617';
+    ctx.fillText(title, cx + 3, cy - 18);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(title, cx, cy - 21);
 
     ctx.fillStyle = '#fde68a';
     ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
     ctx.fillText(
-      engine.winner ? 'Out through the garden gate with a full basket.' : 'Both raiders nodded off. Nobody gets dinner.',
+      engine.winner
+        ? 'Escaped through the 3D garden gate with a full picnic basket!'
+        : 'Both raiders nodded off before escaping. Nobody gets dinner!',
       cx,
       cy + 22
     );
 
-    ctx.fillStyle = '#a8a29e';
-    ctx.font = '15px "Trebuchet MS", sans-serif';
-    ctx.fillText('Press Space to raid again', cx, cy + 58);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
+    ctx.fillText('Press SPACE or click "New Raid" in Options to play again', cx, cy + 62);
 
     ctx.restore();
   }

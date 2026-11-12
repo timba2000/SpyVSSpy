@@ -1,6 +1,7 @@
 /**
  * Midnight Snackdown - Main Application Entry Point
- * Orchestrates Engine, Keyboard, AI, Audio, VFX, and the Split-Screen Renderer.
+ * Orchestrates Engine, Keyboard, AI, Audio, VFX, 3D Split-Screen Renderer,
+ * and the Interactive Instructions & Options Modal.
  */
 
 import { GameEngine } from './core/engine';
@@ -9,6 +10,7 @@ import { KeyboardController } from './input/keyboard';
 import { RivalAI } from './input/ai/rivalAI';
 import { GameAudio } from './audio/gameAudio';
 import { VisualEffects } from './renderer/visualEffects';
+import { render3DSettings } from './renderer/render3d';
 
 window.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -23,70 +25,227 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  // Initialize Core Systems
-  const engine = new GameEngine();
+  let matchDurationSeconds = 180;
+  let engine = new GameEngine({ matchDurationSeconds });
   const keyboard = new KeyboardController(engine, 'RUSTY');
-  const ai = new RivalAI(engine, 'SOOT');
+  let ai = new RivalAI(engine, 'SOOT');
   const audio = new GameAudio();
-  const vfx = new VisualEffects();
+  let vfx = new VisualEffects();
+  let isPaused = false;
 
-  // Sound needs a user gesture; the game-over screen restarts on a fresh Space press.
-  window.addEventListener('keydown', (e) => {
-    audio.unlock();
-    if (engine.isGameOver && e.code === 'Space' && !e.repeat) {
-      window.location.reload();
+  function bindEngineEvents(activeEngine: GameEngine): void {
+    activeEngine.events.on('RAIDER_STARTED_SEARCH', () => audio.playRummage());
+
+    activeEngine.events.on('LOOT_FOUND', (payload) => {
+      audio.playLootFound();
+      const raider = activeEngine.getRaider(payload.raider);
+      vfx.addLootFound(raider.currentRoomId, raider.x, raider.y, payload.item);
+    });
+
+    activeEngine.events.on('TRAP_SET', () => audio.playTrapSet());
+
+    activeEngine.events.on('TRAP_SPRUNG', (payload) => {
+      audio.playTrapSprung();
+      const victim = activeEngine.getRaider(payload.victim);
+      vfx.addTrapSprung(victim.currentRoomId, victim.x, victim.y, payload.trapType);
+    });
+
+    activeEngine.events.on('TRAP_CLEARED', (payload) => {
+      audio.playTrapCleared();
+      const raider = activeEngine.getRaider(payload.clearedBy);
+      vfx.addTrapCleared(raider.currentRoomId, raider.x, raider.y);
+    });
+
+    activeEngine.events.on('COMBAT_HIT', (payload) => {
+      audio.playSwat();
+      const target = activeEngine.getRaider(payload.target);
+      vfx.addSwatHit(target.currentRoomId, target.x, target.y);
+    });
+
+    activeEngine.events.on('RAIDER_KNOCKED_OUT', (payload) => {
+      const victim = activeEngine.getRaider(payload.victim);
+      vfx.addKnockout(victim.currentRoomId, victim.x, victim.y);
+    });
+
+    activeEngine.events.on('GATE_REFUSED', (payload) => {
+      audio.playGateRefused();
+      const raider = activeEngine.getRaider(payload.raider);
+      vfx.addGateRefused(raider.currentRoomId, raider.x, raider.y);
+    });
+
+    activeEngine.events.on('MATCH_WON', () => audio.playWin());
+    activeEngine.events.on('TIME_UP', () => audio.playTimeUp());
+  }
+
+  bindEngineEvents(engine);
+
+  function startNewRaid(): void {
+    engine = new GameEngine({ matchDurationSeconds });
+    ai = new RivalAI(engine, 'SOOT');
+    vfx = new VisualEffects();
+    keyboard.setEngine(engine);
+    bindEngineEvents(engine);
+  }
+
+  // --- Instructions & Options Modal Controller ---
+  const modalOverlay = document.getElementById('modal-overlay');
+  const instructionsBtn = document.getElementById('instructions-btn');
+  const optionsBtn = document.getElementById('options-btn');
+  const tabBtnInstructions = document.getElementById('tab-btn-instructions');
+  const tabBtnOptions = document.getElementById('tab-btn-options');
+  const panelInstructions = document.getElementById('panel-instructions');
+  const panelOptions = document.getElementById('panel-options');
+  const closeBtn = document.getElementById('modal-close-btn');
+  const resumeFooterBtn = document.getElementById('modal-resume-footer-btn');
+
+  function switchTab(tab: 'instructions' | 'options'): void {
+    const isInst = tab === 'instructions';
+    tabBtnInstructions?.classList.toggle('active', isInst);
+    tabBtnOptions?.classList.toggle('active', !isInst);
+    panelInstructions?.classList.toggle('active', isInst);
+    panelOptions?.classList.toggle('active', !isInst);
+  }
+
+  function openModal(tab: 'instructions' | 'options'): void {
+    switchTab(tab);
+    modalOverlay?.classList.add('open');
+    isPaused = true;
+    keyboard.setEnabled(false);
+  }
+
+  function closeModal(): void {
+    modalOverlay?.classList.remove('open');
+    isPaused = false;
+    keyboard.setEnabled(true);
+  }
+
+  instructionsBtn?.addEventListener('click', () => {
+    instructionsBtn.blur();
+    if (modalOverlay?.classList.contains('open') && panelInstructions?.classList.contains('active')) {
+      closeModal();
+    } else {
+      openModal('instructions');
     }
   });
-  window.addEventListener('pointerdown', () => audio.unlock());
 
-  // Attach Audio Feedback & Visual Effects to Engine Events
-  engine.events.on('RAIDER_STARTED_SEARCH', () => audio.playRummage());
+  optionsBtn?.addEventListener('click', () => {
+    optionsBtn.blur();
+    if (modalOverlay?.classList.contains('open') && panelOptions?.classList.contains('active')) {
+      closeModal();
+    } else {
+      openModal('options');
+    }
+  });
 
-  engine.events.on('LOOT_FOUND', (payload) => {
+  tabBtnInstructions?.addEventListener('click', () => switchTab('instructions'));
+  tabBtnOptions?.addEventListener('click', () => switchTab('options'));
+  closeBtn?.addEventListener('click', closeModal);
+  resumeFooterBtn?.addEventListener('click', closeModal);
+
+  modalOverlay?.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) {
+      closeModal();
+    }
+  });
+
+  // --- Wire Options Controls ---
+  const soundEnabledInput = document.getElementById('opt-sound-enabled') as HTMLInputElement | null;
+  const volumeInput = document.getElementById('opt-volume') as HTMLInputElement | null;
+  const volumeLabel = document.getElementById('opt-volume-label');
+  const testSoundBtn = document.getElementById('opt-test-sound');
+  const moonlightInput = document.getElementById('opt-moonlight') as HTMLInputElement | null;
+  const shadowsInput = document.getElementById('opt-shadows') as HTMLInputElement | null;
+  const depthScaleSelect = document.getElementById('opt-depth-scale') as HTMLSelectElement | null;
+  const showHintInput = document.getElementById('opt-show-hint') as HTMLInputElement | null;
+  const matchDurationSelect = document.getElementById('opt-match-duration') as HTMLSelectElement | null;
+  const newRaidBtn = document.getElementById('opt-new-raid-btn');
+  const hint = document.getElementById('controls-hint');
+
+  soundEnabledInput?.addEventListener('change', () => {
+    audio.muted = !soundEnabledInput.checked;
+  });
+
+  volumeInput?.addEventListener('input', () => {
+    const val = Number(volumeInput.value);
+    audio.masterVolume = val / 100;
+    if (volumeLabel) volumeLabel.textContent = `${val}%`;
+  });
+
+  testSoundBtn?.addEventListener('click', () => {
+    audio.unlock();
     audio.playLootFound();
-    const raider = engine.getRaider(payload.raider);
-    vfx.addLootFound(raider.currentRoomId, raider.x, raider.y, payload.item);
   });
 
-  engine.events.on('TRAP_SET', () => audio.playTrapSet());
-
-  engine.events.on('TRAP_SPRUNG', (payload) => {
-    audio.playTrapSprung();
-    const victim = engine.getRaider(payload.victim);
-    vfx.addTrapSprung(victim.currentRoomId, victim.x, victim.y, payload.trapType);
+  moonlightInput?.addEventListener('change', () => {
+    render3DSettings.moonlightRays = moonlightInput.checked;
   });
 
-  engine.events.on('TRAP_CLEARED', (payload) => {
-    audio.playTrapCleared();
-    const raider = engine.getRaider(payload.clearedBy);
-    vfx.addTrapCleared(raider.currentRoomId, raider.x, raider.y);
+  shadowsInput?.addEventListener('change', () => {
+    render3DSettings.shadowsAndReflections = shadowsInput.checked;
   });
 
-  engine.events.on('COMBAT_HIT', (payload) => {
-    audio.playSwat();
-    const target = engine.getRaider(payload.target);
-    vfx.addSwatHit(target.currentRoomId, target.x, target.y);
+  depthScaleSelect?.addEventListener('change', () => {
+    render3DSettings.depthScale = Number(depthScaleSelect.value) || 1.0;
   });
 
-  engine.events.on('RAIDER_KNOCKED_OUT', (payload) => {
-    const victim = engine.getRaider(payload.victim);
-    vfx.addKnockout(victim.currentRoomId, victim.x, victim.y);
+  showHintInput?.addEventListener('change', () => {
+    if (hint) {
+      hint.style.display = showHintInput.checked ? 'block' : 'none';
+    }
   });
 
-  engine.events.on('GATE_REFUSED', (payload) => {
-    audio.playGateRefused();
-    const raider = engine.getRaider(payload.raider);
-    vfx.addGateRefused(raider.currentRoomId, raider.x, raider.y);
+  matchDurationSelect?.addEventListener('change', () => {
+    matchDurationSeconds = Number(matchDurationSelect.value) || 180;
   });
 
-  engine.events.on('MATCH_WON', () => audio.playWin());
-  engine.events.on('TIME_UP', () => audio.playTimeUp());
+  newRaidBtn?.addEventListener('click', () => {
+    startNewRaid();
+    closeModal();
+  });
+
+  // Global keyboard shortcuts for audio unlock, game-over restart, and Instructions/Options modal
+  window.addEventListener('keydown', (e) => {
+    audio.unlock();
+    if (e.repeat) return;
+
+    if (e.code === 'Escape') {
+      if (modalOverlay?.classList.contains('open')) {
+        closeModal();
+      } else {
+        openModal('options');
+      }
+      return;
+    }
+
+    if (e.code === 'KeyI' || e.code === 'KeyH') {
+      if (modalOverlay?.classList.contains('open') && panelInstructions?.classList.contains('active')) {
+        closeModal();
+      } else {
+        openModal('instructions');
+      }
+      return;
+    }
+
+    if (e.code === 'KeyO') {
+      if (modalOverlay?.classList.contains('open') && panelOptions?.classList.contains('active')) {
+        closeModal();
+      } else {
+        openModal('options');
+      }
+      return;
+    }
+
+    if (!isPaused && engine.isGameOver && e.code === 'Space') {
+      startNewRaid();
+    }
+  });
+
+  window.addEventListener('pointerdown', () => audio.unlock());
 
   // Fullscreen Toggle
   const fullscreenBtn = document.getElementById('fullscreen-btn');
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => {
-      // Give focus back to the game so Space searches rather than re-pressing this button.
       fullscreenBtn.blur();
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(() => {});
@@ -96,15 +255,14 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('fullscreenchange', () => {
-      fullscreenBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
+      fullscreenBtn.textContent = document.fullscreenElement ? '⛶ Exit Fullscreen' : '⛶ Fullscreen';
     });
   }
 
   // Fade controls hint after 6 seconds of play, reappears on hover
-  const hint = document.getElementById('controls-hint');
   if (hint) {
     setTimeout(() => {
-      hint.style.opacity = '0.35';
+      hint.style.opacity = '0.4';
     }, 6000);
   }
 
@@ -117,16 +275,19 @@ window.addEventListener('DOMContentLoaded', () => {
   function gameLoop(currentTime: number): void {
     const delta = currentTime - lastTime;
     lastTime = currentTime;
-    accumulator += Math.min(delta, 100);
 
-    // Fixed timestep updates
-    while (accumulator >= timeStep) {
-      keyboard.update();
-      ai.update();
-      engine.tick();
-      vfx.update();
-      accumulator -= timeStep;
-      tickCounter++;
+    if (!isPaused) {
+      accumulator += Math.min(delta, 100);
+
+      // Fixed timestep updates
+      while (accumulator >= timeStep) {
+        keyboard.update();
+        ai.update();
+        engine.tick();
+        vfx.update();
+        accumulator -= timeStep;
+        tickCounter++;
+      }
     }
 
     SplitScreenRenderer.render(ctx!, engine, vfx, canvas.width, canvas.height, tickCounter);
